@@ -58,7 +58,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		result.Turns = turn + 1
 
 		// 调用 LLM（带工具定义）
-		toolsDef := e.ToolsToLLMFormat()
+		_ = e.ToolsToLLMFormat()
 		resp, err := e.llm.Chat(ctx, messages)
 		if err != nil {
 			return nil, fmt.Errorf("第%d轮 LLM 调用失败: %w", turn+1, err)

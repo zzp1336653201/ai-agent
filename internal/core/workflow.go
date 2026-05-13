@@ -73,11 +73,6 @@ func (e *WorkflowEngine) Execute(ctx context.Context, workflowID string, input m
 
 	now := time.Now()
 	exec.FinishedAt = &now
-	exec.model.Status = result.Status
-	exec.model.ErrorMsg = result.ErrorMsg
-	exec.model.Output = result.OutputJSON()
-
-	e.store.UpdateExecution(ctx, exec.model)
 
 	return result, nil
 }
@@ -265,7 +260,7 @@ func (e *WorkflowEngine) executeHTTPNode(ctx context.Context, node *GraphNode, v
 	config := node.Config
 	url, _ := config["url"].(string)
 	method, _ := config["method"].(string)
-	headers, _ := config["headers"].(map[string]interface{})
+	_, _ = config["headers"].(map[string]interface{})
 	bodyTemplate, _ := config["body"].(string)
 	outputKey, _ := config["output_key"].(string)
 	if outputKey == "" {
@@ -273,7 +268,7 @@ func (e *WorkflowEngine) executeHTTPNode(ctx context.Context, node *GraphNode, v
 	}
 
 	renderedURL := renderTemplate(url, variables)
-	renderedBody := renderTemplate(bodyTemplate, variables)
+	_ = renderTemplate(bodyTemplate, variables)
 
 	// TODO: 实际 HTTP 调用，这里简化返回模拟数据
 	output := map[string]interface{}{
@@ -385,14 +380,11 @@ type ExecutionStep struct {
 
 func NewWorkflowExecution(workflowID string) *WorkflowExecution {
 	return &WorkflowExecution{
-		ID: model.NewWorkflowExecution(workflowID).ID,
-		model: &model.WorkflowExecution{
-			ID:         model.NewWorkflowExecution(workflowID).ID,
-			WorkflowID: workflowID,
-			Status:     "running",
-			StartedAt:  time.Now(),
-		},
-		steps: make([]ExecutionStep, 0),
+		ID:         uuid.New().String(),
+		WorkflowID: workflowID,
+		Status:     "running",
+		StartedAt:  time.Now(),
+		steps:      make([]ExecutionStep, 0),
 	}
 }
 

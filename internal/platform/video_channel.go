@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -168,8 +169,6 @@ func (v *VideoChannelAdapter) CreateComment(ctx context.Context, postID, content
 func (v *VideoChannelAdapter) ReplyComment(ctx context.Context, commentID, content string, token *TokenInfo) (string, error) { return "", nil }
 
 // ==================== 辅助函数 ====================
-
-import "strings"
 
 func isVideoFile(url string) bool {
 	videoExts := []string{".mp4", ".mov", ".avi", ".mkv", ".webm"}

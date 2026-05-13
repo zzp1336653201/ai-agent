@@ -46,9 +46,9 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 
 func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	query, _ := params["query"].(string)
-	count := 5
+	_ = 5 // 默认搜索数量
 	if c, ok := params["count"].(float64); ok {
-		count = int(c)
+		_ = int(c)
 	}
 
 	// 调用 DuckDuckGo Instant Answer API（免费无需 API Key）

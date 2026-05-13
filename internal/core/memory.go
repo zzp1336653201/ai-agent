@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"sirenagent/internal/model"
@@ -75,7 +76,7 @@ func (m *InMemoryMemoryManager) GetShortTerm(ctx context.Context, agentID, userI
 
 func (m *InMemoryMemoryManager) SaveLongTerm(ctx context.Context, memory *model.Memory) error {
 	memory.CreatedAt = time.Now()
-	m.memory.UpdatedAt = time.Now()
+	memory.UpdatedAt = time.Now()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
