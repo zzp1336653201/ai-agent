@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"sirenagent/internal/core"
+	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
 	"sirenagent/pkg/vector"
 )
@@ -16,7 +17,8 @@ type RAGService struct {
 	llm      llm.LLMProvider
 	vectorDB vector.VectorProvider
 	memory   core.MemoryManager
-	model    string // LLM 模型名称
+	model    string  // LLM 模型名称
+	engine   *core.AgentEngine // Agent 引擎（用于支持工具调用）
 }
 
 func NewRAGService(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, memory core.MemoryManager, model string) *RAGService {
@@ -26,6 +28,11 @@ func NewRAGService(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, 
 		memory:   memory,
 		model:    model,
 	}
+}
+
+// SetAgentEngine 设置 Agent 引擎（使 RAG 支持工具调用）
+func (s *RAGService) SetAgentEngine(engine *core.AgentEngine) {
+	s.engine = engine
 }
 
 // QueryRequest 查询请求
@@ -60,7 +67,7 @@ type MemoryRef struct {
 }
 
 // Query 执行 RAG 检索增强生成 — 核心流程：
-// 用户提问 → 向量检索 + 记忆检索 → 上下文构建 → Prompt 注入 → LLM 生成 → 返回答案+来源
+// 用户提问 → 向量检索 + 记忆检索 → 上下文构建 → (有内容则RAG / 无内容则Agent工具调用) → 返回答案+来源
 func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
 	if req.TopK == 0 { req.TopK = 5 }
 	if req.Collection == "" { req.Collection = "agent_knowledge" }
@@ -99,23 +106,53 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 		if len(memories) > 0 { method = "hybrid" }
 	}
 
-	// Step 3: 构建上下文（Prompt 工程）
-	context := s.buildContext(vecResults, memories)
+	var answer string
 
-	// Step 4: 构建 Prompt 并调用 LLM
-	prompt := s.buildPrompt(req.Query, context)
+	if len(sourceInfos) > 0 || len(memories) > 0 {
+		// 有上下文 → 走传统 RAG 流程
+		method = method
 
-	resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
-		Model:       s.model,
-		Prompt:      prompt,
-		System:      `你是一个专业的智能助手。
-1. 如果上下文中有相关内容，优先基于上下文回答
-2. 如果上下文信息不足，但问题涉及实时数据（如时间、天气、新闻），请基于你的知识尽力回答
-3. 使用简洁清晰的中文回答`,
-		Temperature: 0.7,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("LLM 调用失败: %w", err)
+		// 构建上下文
+		context := s.buildContext(vecResults, memories)
+
+		prompt := s.buildPrompt(req.Query, context)
+		resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
+			Model:       s.model,
+			Prompt:      prompt,
+			System:      "你是一个专业的智能助手。基于提供的上下文信息准确回答用户问题。使用简洁清晰的中文回答。",
+			Temperature: 0.7,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("LLM 调用失败: %w", err)
+		}
+		answer = resp.Content
+
+	} else if s.engine != nil {
+		// 知识库为空但有 Agent 引擎 → 走 Agent ReAct 循环（支持联网等工具调用）
+		method = "agent"
+		dummyAgent := &model.Agent{
+			Name:         "RAG助手",
+			SystemPrompt: "你是一个专业的 AI 助手，擅长使用工具获取信息并回答问题。当用户询问需要实时数据时，主动使用 web_search 工具搜索互联网。",
+		}
+
+		result, err := s.engine.Run(ctx, dummyAgent, req.Query)
+		if err != nil {
+			return nil, fmt.Errorf("Agent 执行失败: %w", err)
+		}
+		answer = result.Answer
+
+	} else {
+		// 无知识库也无 Agent 引擎 → 直接调 LLM
+		resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
+			Model:       s.model,
+			Prompt:      req.Query,
+			System:      "你是一个专业的智能助手。请用简洁清晰的中文回答用户的问题。",
+			Temperature: 0.7,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("LLM 调用失败: %w", err)
+		}
+		answer = resp.Content
 	}
 
 	bestScore := float64(0)
