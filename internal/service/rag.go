@@ -9,6 +9,8 @@ import (
 	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
 	"sirenagent/pkg/vector"
+
+	"go.uber.org/zap"
 )
 
 // RAGService 检索增强生成服务（升级版）
@@ -128,14 +130,27 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 		method = "agent"
 		dummyAgent := &model.Agent{
 			Name:         "RAG助手",
-			SystemPrompt: "你是一个专业的 AI 助手，擅长使用工具获取信息并回答问题。当用户询问需要实时数据时，主动使用 web_search 工具搜索互联网。",
+			SystemPrompt: "你是一个友好的AI助手，可以帮助用户解答问题。",
 		}
 
 		result, err := s.engine.Run(ctx, dummyAgent, req.Query)
 		if err != nil {
-			return nil, fmt.Errorf("Agent 执行失败: %w", err)
+			// Agent 执行失败，降级到直接 LLM 调用
+			sugar := zap.NewExample().Sugar()
+			sugar.Warnf("Agent 执行失败，降级到 LLM: %v", err)
+			resp, llmErr := s.llm.Generate(ctx, &llm.GenerateRequest{
+				Model:       s.model,
+				Prompt:      req.Query,
+				System:      "你是一个友好的AI助手，请用简洁的中文回答用户的问题。",
+				Temperature: 0.7,
+			})
+			if llmErr != nil {
+				return nil, fmt.Errorf("LLM 调用失败: %w", llmErr)
+			}
+			answer = resp.Content
+		} else {
+			answer = result.Answer
 		}
-		answer = result.Answer
 
 	} else {
 		// 无知识库也无 Agent 引擎 → 直接调 LLM
