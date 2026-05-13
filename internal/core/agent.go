@@ -136,23 +136,23 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			result.ToolCalls = append(result.ToolCalls, record)
 
 			// 将工具调用和结果加入消息历史
-			messages = append(messages, &llm.Message{
-				Role:    "assistant",
-				Content: resp.Content,
-				ToolCalls: []*llm.ToolCall{&tc},
-			})
+			assistantMsg := &llm.Message{
+				Role:       "assistant",
+				Content:    resp.Content,
+				ToolCalls:  []llm.ToolCall{tc}, // 直接使用 tc 值
+			}
+			messages = append(messages, assistantMsg)
+
+			toolContent := record.Output.Content
+			if record.Output.Error != "" {
+				toolContent = fmt.Sprintf("错误: %s", record.Output.Error)
+			}
 			messages = append(messages, &llm.Message{
 				Role:       "tool",
-				Content:    record.Output.Content,
+				Content:    toolContent,
 				Name:       tc.Function.Name,
 				ToolCallID: tc.ID,
 			})
-
-			toolResultContent := record.Output.Content
-			if record.Output.Error != "" {
-				toolResultContent = fmt.Sprintf("错误: %s", record.Output.Error)
-			}
-			// 已经在上面添加了 tool message
 		}
 	}
 
