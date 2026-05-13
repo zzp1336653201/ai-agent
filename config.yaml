@@ -1,0 +1,59 @@
+server:
+  port: 8080
+
+# LLM 配置 - 支持 Ollama / OpenAI / 豆包 多模型切换
+llm:
+  provider: openai          # ollama | openai | doubao
+  endpoint: https://api.deepseek.com
+  model: deepseek-chat
+  api_key: sk-your-deepseek-api-key-here
+  max_tokens: 2048
+  temperature: 0.7
+
+# 向量数据库配置
+vector_db:
+  provider: chromadb         # chromadb | pgvector
+  endpoint: http://localhost:8000
+  collection: agent_knowledge
+  embedding_model: nomic-embed-text
+
+# 数据库配置（PostgreSQL）
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: sirenagent
+  sslmode: disable
+
+# Redis 缓存配置
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+
+# Agent 配置
+agent:
+  max_iterations: 10        # 最大推理轮次
+  memory_ttl: 3600          # 记忆过期时间(秒)
+  tools_timeout: 30         # 工具调用超时(秒)
+
+# 社交媒体平台配置
+social_platforms:
+  douyin:
+    enabled: true
+    app_id: ""
+    app_secret: ""
+  xiaohongshu:
+    enabled: true
+    app_id: ""
+    app_secret: ""
+  video_channel:
+    enabled: true
+    app_id: ""
+    app_secret: ""
+
+# MCP 服务配置
+mcp:
+  enabled: true
+  servers: []

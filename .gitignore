@@ -1,0 +1,30 @@
+# 排除所有 Markdown 文档（本地学习用）
+*.md
+
+# 开发文件
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 日志
+*.log
+logs/
+
+# 二进制文件
+sirenagent
+*.exe
+
+# 测试覆盖率
+coverage.out
+*.out
+
+# 环境变量
+.env
+.env.local
+.env.*.local
