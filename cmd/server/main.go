@@ -61,13 +61,16 @@ func main() {
 		vectorDB = pgVDB
 		sugar.Infof("✅ 向量数据库: Pgvector (PostgreSQL)")
 	} else {
-		// 使用 ChromaDB
+		// 使用 ChromaDB（开发模式下初始化失败使用 Mock）
 		chromaDB, err := vector.NewChromaDB(cfg.VectorDB.Endpoint)
 		if err != nil {
-			logger.Fatal("向量数据库初始化失败", zap.Error(err))
+			sugar.Warnf("⚠️  ChromaDB 连接失败，使用 Mock 向量数据库: %v", err)
+			vectorDB = vector.NewMockVectorProvider()
+			sugar.Info("✅ 向量数据库: Mock (开发模式)")
+		} else {
+			vectorDB = chromaDB
+			sugar.Infof("✅ 向量数据库: ChromaDB @ %s", cfg.VectorDB.Endpoint)
 		}
-		vectorDB = chromaDB
-		sugar.Infof("✅ 向量数据库: ChromaDB @ %s", cfg.VectorDB.Endpoint)
 	}
 
 	// 5. 初始化记忆管理器
