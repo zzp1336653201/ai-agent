@@ -92,8 +92,15 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		totalToken.PromptTokens += resp.TokenUsage.PromptTokens
 		totalToken.CompletionTokens += resp.TokenUsage.CompletionTokens
 
-		// 检查是否有工具调用
-		if len(resp.ToolCalls) == 0 {
+		// 检查是否有工具调用（两种方式：1. Function Calling 2. 文本解析）
+		toolCalls := resp.ToolCalls
+		
+		// 如果没有 function calling，尝试从文本中解析工具调用
+		if len(toolCalls) == 0 {
+			toolCalls = e.parseToolCallsFromText(resp.Content)
+		}
+
+		if len(toolCalls) == 0 {
 			// 无工具调用，说明是最终答案
 			result.Answer = resp.Content
 			break
@@ -230,21 +237,93 @@ func (e *AgentEngine) buildSystemPrompt(agent *model.Agent) string {
 
 	// 行为约束
 	parts = append(parts, "# 行为规范")
-	parts = append(parts, "1. 先理解用户意图，再决定是否需要调用工具")
+	parts = append(parts, "1. 如果用户询问实时信息（时间、天气、新闻等），必须使用工具获取")
 	parts = append(parts, "2. 每次只调用一个工具，观察结果后再决定下一步")
-	parts = append(parts, "3. 如果无法从上下文或工具获取答案，诚实告知用户")
-	parts = append(parts, "4. 回答要简洁准确，避免冗余")
-	parts = append(parts, "5. 使用中文回答")
+	parts = append(parts, "3. 回答要简洁准确，使用中文")
 	parts = append(parts, "")
 
 	// 输出格式
-	parts = append(parts, "# 输出格式")
-	parts = append(parts, "当你需要使用工具时，请按以下格式输出函数调用：")
-	parts = append(parts, ``)
-	parts = append(parts, "当你可以直接回答时，直接给出答案即可。")
+	parts = append(parts, "# 重要：工具调用格式")
+	parts = append(parts, "当你需要使用工具时，必须使用以下 JSON 格式输出（不要有任何其他文字）：")
+	parts = append(parts, `{"tool": "工具名称", "params": {"参数名": "参数值"}}`)
 	parts = append(parts, "")
+	parts = append(parts, "例如调用网络搜索：")
+	parts = append(parts, `{"tool": "web_search", "params": {"query": "当前北京时间"}}`)
+	parts = append(parts, "")
+	parts = append(parts, "当你可以直接回答时，直接给出答案（不要使用工具调用格式）。")
 
 	return strings.Join(parts, "\n")
+}
+
+// parseToolCallsFromText 从文本中解析工具调用
+// 当 LLM 不支持 function calling 时使用此方法
+func (e *AgentEngine) parseToolCallsFromText(content string) []llm.ToolCall {
+	// 尝试在文本中查找 JSON 工具调用格式
+	// 格式: {"tool": "xxx", "params": {...}}
+	
+	var calls []llm.ToolCall
+	
+	// 查找所有可能的 JSON 对象
+	start := 0
+	for {
+		idx := strings.Index(content[start:], `{"tool"`)
+		if idx == -1 {
+			idx = strings.Index(content[start:], `{"tool"`)
+			if idx == -1 {
+				break
+			}
+		}
+		
+		// 找到可能的 JSON 开始位置
+		jsonStart := start + idx
+		
+		// 尝试找到完整的 JSON 对象（到第一个 }）
+		depth := 0
+		jsonEnd := -1
+		for i := jsonStart; i < len(content); i++ {
+			if content[i] == '{' {
+				depth++
+			} else if content[i] == '}' {
+				depth--
+				if depth == 0 {
+					jsonEnd = i + 1
+					break
+				}
+			}
+		}
+		
+		if jsonEnd == -1 {
+			break
+		}
+		
+		jsonStr := content[jsonStart:jsonEnd]
+		
+		// 解析 JSON
+		var toolCall struct {
+			Tool  string                 `json:"tool"`
+			Params map[string]interface{} `json:"params"`
+		}
+		
+		if err := json.Unmarshal([]byte(jsonStr), &toolCall); err == nil {
+			if toolCall.Tool != "" {
+				// 检查工具是否存在
+				if _, exists := e.tools[toolCall.Tool]; exists {
+					argsJSON, _ := json.Marshal(toolCall.Params)
+					calls = append(calls, llm.ToolCall{
+						ID: fmt.Sprintf("call_%d", len(calls)),
+						Function: &llm.FunctionCall{
+							Name:      toolCall.Tool,
+							Arguments: string(argsJSON),
+						},
+					})
+				}
+			}
+		}
+		
+		start = jsonEnd
+	}
+	
+	return calls
 }
 
 // ==================== 多智能体协作 ====================
