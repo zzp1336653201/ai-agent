@@ -244,7 +244,7 @@ func (e *WorkflowEngine) executeToolNode(ctx context.Context, node *GraphNode, v
 // executeConditionNode 条件判断节点 - 支持工作流分支
 func (e *WorkflowEngine) executeConditionNode(node *GraphNode, variables map[string]interface{}) *NodeResult {
 	config := node.Config
-	conditionExpr, _ := config["condition"].(string")
+	conditionExpr, _ := config["condition"].(string)
 
 	// 简单的条件求值（生产环境可用 govaluate 库）
 	result := evaluateCondition(conditionExpr, variables)

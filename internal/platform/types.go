@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"sirenagent/internal/model"
@@ -180,4 +181,3 @@ func (m *PlatformManager) ListPlatforms() []string {
 	return names
 }
 
-import "fmt"

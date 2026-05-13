@@ -93,8 +93,8 @@ func (c *ChromaDB) Search(ctx context.Context, query string, topK int, collectio
 				score = 1 - result.Distances[i][j]
 			}
 			var metadata map[string]interface{}
-			if len(result.Metadatas) > i && len(result.Metadatas[i]) > j {
-				metadata = result.Metadatas[i][j]
+			if len(result.Metadatas) > i && len(result.Metadatas[i]) > j && len(result.Metadatas[i][j]) > 0 {
+				metadata = result.Metadatas[i][j][0]
 			}
 			searchResults = append(searchResults, SearchResult{
 				ID:         id,

@@ -2,7 +2,6 @@ package vector
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"gorm.io/gorm"
