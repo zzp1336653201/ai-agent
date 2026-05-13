@@ -125,7 +125,7 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 }
 
 // buildContext 构建 RAG 上下文 — Prompt 工程的关键环节
-func (s *RAGService) buildContext(vectorResults []core.SearchResult, memories []MemoryRef) string {
+func (s *RAGService) buildContext(vectorResults []vector.SearchResult, memories []MemoryRef) string {
 	var parts []string
 
 	// 知识库片段
