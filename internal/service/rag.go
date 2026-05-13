@@ -7,17 +7,18 @@ import (
 
 	"sirenagent/internal/core"
 	"sirenagent/pkg/llm"
+	"sirenagent/pkg/vector"
 )
 
 // RAGService 检索增强生成服务（升级版）
 // 对应职位要求：RAG 技术、记忆管理、混合检索
 type RAGService struct {
 	llm      llm.LLMProvider
-	vectorDB core.VectorStore
+	vectorDB vector.VectorProvider
 	memory   core.MemoryManager
 }
 
-func NewRAGService(llmProvider llm.LLMProvider, vectorDB core.VectorStore, memory core.MemoryManager) *RAGService {
+func NewRAGService(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, memory core.MemoryManager) *RAGService {
 	return &RAGService{
 		llm:      llmProvider,
 		vectorDB: vectorDB,

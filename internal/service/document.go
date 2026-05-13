@@ -11,7 +11,7 @@ import (
 // DocumentService 文档管理服务
 type DocumentService struct {
 	repo     DocumentRepository
-	vectorDB *vector.ChromaDB
+	vectorDB vector.VectorProvider
 }
 
 type DocumentRepository interface {
@@ -21,7 +21,7 @@ type DocumentRepository interface {
 	Delete(id string) error
 }
 
-func NewDocumentService(repo DocumentRepository, vectorDB *vector.ChromaDB) *DocumentService {
+func NewDocumentService(repo DocumentRepository, vectorDB vector.VectorProvider) *DocumentService {
 	return &DocumentService{repo: repo, vectorDB: vectorDB}
 }
 

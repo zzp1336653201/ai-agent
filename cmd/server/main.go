@@ -128,12 +128,12 @@ func main() {
 	}()
 
 	sugar.Infof("\n========================================")
-	sugar.Printf("  🎯 SirenAgent AI 智能体平台", addr)
-	sugar.Printf("  📡 API 地址: http://localhost:%d", cfg.Server.Port)
-	sugar.Printf("  📖 API 文档: http://localhost:%d/api/v1/health", cfg.Server.Port)
-	sugar.Printf("  🔧 LLM: %s / Model: %s", cfg.LLM.Provider, cfg.LLM.Model)
-	sugar.Printf("  💾 VectorDB: ChromaDB @ %s", cfg.VectorDB.Endpoint)
-	sugar.Printf("  🛠 工具数: %d", len(agentEngine.ListTools()))
+	sugar.Infof("  🎯 SirenAgent AI 智能体平台")
+	sugar.Infof("  📡 API 地址: http://localhost:%d", cfg.Server.Port)
+	sugar.Infof("  📖 API 文档: http://localhost:%d/api/v1/health", cfg.Server.Port)
+	sugar.Infof("  🔧 LLM: %s / Model: %s", cfg.LLM.Provider, cfg.LLM.Model)
+	sugar.Infof("  💾 VectorDB: %s", cfg.VectorDB.Provider)
+	sugar.Infof("  🛠 工具数: %d", len(agentEngine.ListTools()))
 	_ = platformAdapters
 	sugar.Infof("========================================\n")
 

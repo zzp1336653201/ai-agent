@@ -6,6 +6,7 @@ import (
 
 	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
+	"sirenagent/pkg/vector"
 )
 
 // ==================== Agent 引擎核心类型 ====================
@@ -13,7 +14,7 @@ import (
 // AgentEngine 智能体引擎（核心调度器）
 type AgentEngine struct {
 	llm       llm.LLMProvider
-	vectorDB  VectorStore
+	vectorDB  vector.VectorProvider
 	memoryMgr MemoryManager
 	tools     map[string]Tool
 	prompts   PromptManager
