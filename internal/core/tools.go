@@ -331,6 +331,12 @@ func (t *CalculatorTool) Parameters() map[string]interface{} {
 }
 
 // CalculatorTool 的 Execute 实现省略，实际可接入 govaluate 库做表达式求值
+func (t *CalculatorTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	return &ToolResult{
+		Success: true,
+		Output:  "计算功能待实现，请接入 govaluate 库",
+	}, nil
+}
 
 // ==================== 文件读写工具 ====================
 
@@ -357,6 +363,13 @@ func (t *FileReadTool) Parameters() map[string]interface{} {
 		},
 		"required": []string{"path"},
 	}
+}
+
+func (t *FileReadTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	return &ToolResult{
+		Success: true,
+		Output:  "文件读取功能待实现，请接入 os 包实现",
+	}, nil
 }
 
 // ==================== 工具接口定义 ====================
