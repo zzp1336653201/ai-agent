@@ -6,6 +6,7 @@ import (
 
 	"sirenagent/internal/core"
 	"sirenagent/internal/model"
+	"sirenagent/pkg/llm"
 )
 
 // AgentService 智能体管理服务
@@ -39,7 +40,7 @@ type ChatResponse struct {
 	ID        string                   `json:"id"`
 	Answer    string                   `json:"answer"`
 	Turns     int                      `json:"turns"`
-	TokenUsage core.TokenUsage         `json:"token_usage"`
+	TokenUsage llm.TokenUsage         `json:"token_usage"`
 	Sources   []core.SourceInfo        `json:"sources"`
 	ToolCalls []*core.ToolCallRecord   `json:"tool_calls"`
 }
