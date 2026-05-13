@@ -189,7 +189,7 @@ type SourceInfo struct {
 }
 
 // NewAgentEngine 创建智能体引擎
-func NewAgentEngine(llmProvider llm.LLMProvider, vectorDB VectorStore, memoryMgr MemoryManager, config EngineConfig) *AgentEngine {
+func NewAgentEngine(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, memoryMgr MemoryManager, config EngineConfig) *AgentEngine {
 	return &AgentEngine{
 		llm:       llmProvider,
 		vectorDB:  vectorDB,
