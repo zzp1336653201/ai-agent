@@ -38,7 +38,7 @@ func main() {
 	sugar.Infof("🚀 SirenAgent 智能体平台启动中...")
 
 	// 3. 初始化 LLM 提供者（策略模式：Ollama / OpenAI / 豆包）
-	llmProvider := llm.NewLLMProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.APIKey)
+	llmProvider := llm.NewLLMProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.APIKey, cfg.LLM.Model)
 	sugar.Infof("✅ LLM 提供者: %s (%s)", cfg.LLM.Provider, cfg.LLM.Model)
 
 	// 4. 初始化向量数据库（支持 ChromaDB / Pgvector）

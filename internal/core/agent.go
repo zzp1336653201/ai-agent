@@ -54,12 +54,38 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 	// 5. ReAct 推理循环
 	var totalToken llm.TokenUsage
+	tools := e.ToolsToLLMFormat()
+	
 	for turn := 0; turn < e.config.MaxIterations; turn++ {
 		result.Turns = turn + 1
 
+		// 构建对话历史为单个 prompt
+		historyPrompt := ""
+		for _, msg := range messages {
+			if msg.Role == "system" && !strings.Contains(msg.Content, "可用工具") {
+				continue
+			}
+			if msg.Role == "tool" {
+				historyPrompt += fmt.Sprintf("\n[工具结果: %s]", msg.Content)
+			}
+			role := "用户"
+			if msg.Role == "assistant" {
+				role = "助手"
+			} else if msg.Role == "system" {
+				continue
+			}
+			historyPrompt += fmt.Sprintf("\n%s: %s", role, msg.Content)
+		}
+
 		// 调用 LLM（带工具定义）
-		_ = e.ToolsToLLMFormat()
-		resp, err := e.llm.Chat(ctx, messages)
+		req := &llm.GenerateRequest{
+			Model:       "deepseek-chat", // 可从配置获取
+			Prompt:      historyPrompt,
+			System:      systemPrompt,
+			Tools:       tools,
+			Temperature: 0.7,
+		}
+		resp, err := e.llm.Generate(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("第%d轮 LLM 调用失败: %w", turn+1, err)
 		}
@@ -67,14 +93,14 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		totalToken.CompletionTokens += resp.TokenUsage.CompletionTokens
 
 		// 检查是否有工具调用
-		if len(resp.Message.ToolCalls) == 0 {
+		if len(resp.ToolCalls) == 0 {
 			// 无工具调用，说明是最终答案
-			result.Answer = resp.Message.Content
+			result.Answer = resp.Content
 			break
 		}
 
 		// 有工具调用：执行工具并注入结果
-		for _, tc := range resp.Message.ToolCalls {
+		for _, tc := range resp.ToolCalls {
 			record := &ToolCallRecord{
 				ToolName: tc.Function.Name,
 			}
@@ -110,18 +136,23 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			result.ToolCalls = append(result.ToolCalls, record)
 
 			// 将工具调用和结果加入消息历史
-			messages = append(messages, resp.Message) // assistant 的 tool_calls 消息
+			messages = append(messages, &llm.Message{
+				Role:    "assistant",
+				Content: resp.Content,
+				ToolCalls: []*llm.ToolCall{&tc},
+			})
+			messages = append(messages, &llm.Message{
+				Role:       "tool",
+				Content:    record.Output.Content,
+				Name:       tc.Function.Name,
+				ToolCallID: tc.ID,
+			})
 
 			toolResultContent := record.Output.Content
 			if record.Output.Error != "" {
 				toolResultContent = fmt.Sprintf("错误: %s", record.Output.Error)
 			}
-			messages = append(messages, &llm.Message{
-				Role:       "tool",
-				Content:    toolResultContent,
-				Name:       tc.Function.Name,
-				ToolCallID: tc.ID,
-			})
+			// 已经在上面添加了 tool message
 		}
 	}
 

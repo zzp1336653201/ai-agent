@@ -14,6 +14,7 @@ type OpenAIProvider struct {
 	endpoint string
 	apiKey   string
 	client   *http.Client
+	model    string // 默认模型名称
 }
 
 type openAIChatRequest struct {
@@ -48,11 +49,15 @@ type openAIUsage struct {
 }
 
 // NewOpenAIProvider 创建 OpenAI 兼容提供者
-func NewOpenAIProvider(endpoint, apiKey string) *OpenAIProvider {
+func NewOpenAIProvider(endpoint, apiKey, model string) *OpenAIProvider {
+	if model == "" {
+		model = "gpt-3.5-turbo"
+	}
 	return &OpenAIProvider{
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		client:   &http.Client{},
+		model:    model,
 	}
 }
 
@@ -118,7 +123,7 @@ func (o *OpenAIProvider) GenerateStream(ctx context.Context, req *GenerateReques
 
 func (o *OpenAIProvider) Chat(ctx context.Context, messages []*Message) (*ChatResponse, error) {
 	resp, err := o.doChat(ctx, &GenerateRequest{
-		Model:    "gpt-3.5-turbo",
+		Model:    o.model,
 		Messages: messages,
 	}, false)
 	if err != nil {
@@ -137,7 +142,7 @@ func (o *OpenAIProvider) Chat(ctx context.Context, messages []*Message) (*ChatRe
 
 func (o *OpenAIProvider) ChatStream(ctx context.Context, messages []*Message) (<-chan StreamChunk, error) {
 	req := &GenerateRequest{
-		Model:    "gpt-3.5-turbo",
+		Model:    o.model,
 		Messages: messages,
 	}
 	return o.GenerateStream(ctx, req)
