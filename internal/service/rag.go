@@ -16,13 +16,15 @@ type RAGService struct {
 	llm      llm.LLMProvider
 	vectorDB vector.VectorProvider
 	memory   core.MemoryManager
+	model    string // LLM 模型名称
 }
 
-func NewRAGService(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, memory core.MemoryManager) *RAGService {
+func NewRAGService(llmProvider llm.LLMProvider, vectorDB vector.VectorProvider, memory core.MemoryManager, model string) *RAGService {
 	return &RAGService{
 		llm:      llmProvider,
 		vectorDB: vectorDB,
 		memory:   memory,
+		model:    model,
 	}
 }
 
@@ -104,6 +106,7 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 	prompt := s.buildPrompt(req.Query, context)
 
 	resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
+		Model:  s.model,
 		Prompt: prompt,
 		System: "你是一个专业的智能助手。基于提供的上下文信息回答用户问题。如果上下文中没有相关信息，请诚实告知无法从提供的信息中找到答案。",
 	})

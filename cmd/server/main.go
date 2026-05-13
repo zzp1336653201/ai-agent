@@ -110,7 +110,7 @@ func main() {
 	agentSvc := service.NewAgentService(agentEngine, &MockAgentRepository{})
 	workflowSvc := service.NewWorkflowService(workflowEngine, &MockWorkflowRepository{})
 	docSvc := service.NewDocumentService(&MockDocumentRepository{}, vectorDB)
-	ragSvc := service.NewRAGService(llmProvider, vectorDB, memoryMgr)
+	ragSvc := service.NewRAGService(llmProvider, vectorDB, memoryMgr, cfg.LLM.Model)
 
 	// 10. 创建 Handler 层
 	agentHandler := handler.NewAgentHandler(agentSvc)
