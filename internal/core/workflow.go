@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
 )
@@ -70,9 +71,6 @@ func (e *WorkflowEngine) Execute(ctx context.Context, workflowID string, input m
 
 	// 4. 从 Start 节点开始执行
 	result := e.executeGraph(ctx, exec, graph, input)
-
-	now := time.Now()
-	exec.FinishedAt = &now
 
 	return result, nil
 }
@@ -380,11 +378,13 @@ type ExecutionStep struct {
 
 func NewWorkflowExecution(workflowID string) *WorkflowExecution {
 	return &WorkflowExecution{
-		ID:         uuid.New().String(),
-		WorkflowID: workflowID,
-		Status:     "running",
-		StartedAt:  time.Now(),
-		steps:      make([]ExecutionStep, 0),
+		ID:    uuid.New().String(),
+		model: &model.WorkflowExecution{
+			WorkflowID: workflowID,
+			Status:     "running",
+			StartedAt:  time.Now(),
+		},
+		steps: make([]ExecutionStep, 0),
 	}
 }
 

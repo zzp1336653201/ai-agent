@@ -156,10 +156,10 @@ func (d *DouyinAdapter) Publish(ctx context.Context, req *PublishRequest, token 
 	}
 
 	return &PublishResult{
-		PostID:      createResult.Task.TaskID,
-		URL:         fmt.Sprintf("https://www.douyin.com/task/%s", createResult.Task.TaskID),
+		PostID:      createResult.TaskID.TaskID,
+		URL:         fmt.Sprintf("https://www.douyin.com/task/%s", createResult.TaskID.TaskID),
 		Status:      "review", // 抖音需要审核
-		RawData:     map[string]interface{}{"task_id": createResult.Task.TaskID},
+		RawData:     map[string]interface{}{"task_id": createResult.TaskID.TaskID},
 	}, nil
 }
 

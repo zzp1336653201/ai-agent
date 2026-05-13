@@ -39,7 +39,7 @@ type TokenInfo struct {
 }
 
 func (t *TokenInfo) IsExpired() bool {
-	return time.Now().Unix() >= t.ExpiresIn
+	return time.Now().Unix() >= int64(t.ExpiresIn)
 }
 
 // PublishRequest 发布请求（跨平台统一格式）
@@ -165,7 +165,7 @@ func (m *PlatformManager) PublishToPlatform(
 		Content:    req.Content,
 		Status:     result.Status,
 		PostID:     result.PostID,
-		PublishAt:  req.PublishAt,
+		PublishTime: req.PublishAt,
 	}
 	m.postRepo.Save(post)
 
