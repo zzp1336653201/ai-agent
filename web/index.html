@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SirenAgent - AI 智能体平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        
+        /* Header */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .nav-tab {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+        }
+        
+        .nav-tab:hover, .nav-tab.active {
+            background: var(--primary);
+            color: white;
+        }
+        
+        /* Main Content */
+        .main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 6rem 2rem 2rem;
+        }
+        
+        /* Panels */
+        .panel {
+            display: none;
+        }
+        
+        .panel.active {
+            display: block;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        /* Chat Panel */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 200px);
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .message {
+            max-width: 80%;
+            padding: 1rem;
+            border-radius: 1rem;
+            line-height: 1.6;
+        }
+        
+        .message.user {
+            background: var(--primary);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 0.25rem;
+        }
+        
+        .message.assistant {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            align-self: flex-start;
+            border-bottom-left-radius: 0.25rem;
+        }
+        
+        .message.error {
+            background: #7f1d1d;
+            border: 1px solid #b91c1c;
+        }
+        
+        .chat-input-container {
+            display: flex;
+            gap: 0.5rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 1rem;
+            border: 1px solid var(--border);
+        }
+        
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 1rem;
+            resize: none;
+            outline: none;
+            min-height: 24px;
+            max-height: 120px;
+        }
+        
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+        
+        .form-input, .form-textarea, .form-select {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            color: var(--text);
+            font-size: 1rem;
+        }
+        
+        .form-input:focus, .form-textarea:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .form-textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        
+        /* File Upload */
+        .file-upload {
+            border: 2px dashed var(--border);
+            border-radius: 1rem;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .file-upload:hover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .file-upload input {
+            display: none;
+        }
+        
+        .file-upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        th {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .badge-success { background: #166534; color: #bbf7d0; }
+        .badge-warning { background: #854d0e; color: #fef08a; }
+        .badge-error { background: #991b1b; color: #fecaca; }
+        
+        /* Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+        
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            color: var(--text-muted);
+        }
+        
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            z-index: 1000;
+        }
+        
+        .toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            margin-top: 0.5rem;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.success { border-left: 4px solid #22c55e; }
+        .toast.error { border-left: 4px solid #ef4444; }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        /* Status Bar */
+        .status-bar {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            padding: 0.75rem 2rem;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+        }
+        
+        .status-dot.offline { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">🎯 SirenAgent</div>
+            <nav class="nav-tabs">
+                <button class="nav-tab active" data-tab="chat">💬 对话</button>
+                <button class="nav-tab" data-tab="agents">🤖 智能体</button>
+                <button class="nav-tab" data-tab="knowledge">📚 知识库</button>
+                <button class="nav-tab" data-tab="workflows">🔄 工作流</button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Chat Panel -->
+        <div id="panel-chat" class="panel active">
+            <div class="card chat-container">
+                <div class="card-title">💬 RAG 智能问答</div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message assistant">
+                        👋 你好！我是 SirenAgent 智能助手。请先上传文档到知识库，然后我就能基于文档内容回答你的问题。
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <textarea 
+                        class="chat-input" 
+                        id="chat-input" 
+                        placeholder="输入你的问题... (Shift+Enter 换行，Enter 发送)"
+                        rows="1"
+                    ></textarea>
+                    <button class="btn btn-primary" id="chat-send">发送</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agents Panel -->
+        <div id="panel-agents" class="panel">
+            <div class="card">
+                <div class="card-title">
+                    🤖 智能体列表
+                    <button class="btn btn-primary" style="margin-left: auto;" onclick="showCreateAgentModal()">+ 创建智能体</button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>描述</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="agents-table">
+                            <tr><td colspan="4" class="loading"><div class="spinner"></div>加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Knowledge Panel -->
+        <div id="panel-knowledge" class="panel">
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">📤 上传文档</div>
+                    <div class="file-upload" onclick="document.getElementById('file-input').click()">
+                        <input type="file" id="file-input" multiple accept=".txt,.pdf,.doc,.docx,.md">
+                        <div class="file-upload-icon">📄</div>
+                        <div>点击或拖拽文件到此处上传</div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
+                            支持 TXT, PDF, DOC, DOCX, MD 格式
+                        </div>
+                    </div>
+                    <div id="upload-progress" style="margin-top: 1rem;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">📚 文档列表</div>
+                    <div id="docs-list">
+                        <div class="loading"><div class="spinner"></div>加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workflows Panel -->
+        <div id="panel-workflows" class="panel">
+            <div class="card">
+                <div class="card-title">
+                    🔄 工作流列表
+                    <button class="btn btn-primary" style="margin-left: auto;" onclick="showCreateWorkflowModal()">+ 创建工作流</button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>状态</th>
+                                <th>执行次数</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workflows-table">
+                            <tr><td colspan="4" class="loading"><div class="spinner"></div>加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+        <div class="status-item">
+            <div class="status-dot" id="api-status"></div>
+            <span>API: <span id="api-url">http://localhost:8080</span></span>
+        </div>
+        <div class="status-item">
+            <span>LLM: <span id="llm-info">检测中...</span></span>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Modal -->
+    <div id="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center;">
+        <div class="card" style="max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto;">
+            <div class="card-title" id="modal-title">创建智能体</div>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+
+    <script>
+        // API Base URL
+        const API_BASE = 'http://localhost:8080/api/v1';
+        
+        // State
+        let agents = [];
+        let documents = [];
+        let workflows = [];
+        let currentAgentId = null;
+        
+        // Toast notification
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+        
+        // API helper
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+        
+        // Tab Navigation
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+                
+                // Load data for the panel
+                if (tab.dataset.tab === 'agents') loadAgents();
+                if (tab.dataset.tab === 'knowledge') loadDocuments();
+                if (tab.dataset.tab === 'workflows') loadWorkflows();
+            });
+        });
+        
+        // ==================== Chat Functions ====================
+        const chatInput = document.getElementById('chat-input');
+        const chatSend = document.getElementById('chat-send');
+        const chatMessages = document.getElementById('chat-messages');
+        
+        // Auto-resize textarea
+        chatInput.addEventListener('input', () => {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+        });
+        
+        // Send message on Enter (Shift+Enter for newline)
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        chatSend.addEventListener('click', sendMessage);
+        
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage('user', message);
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+            
+            // Show loading
+            const loadingMsg = addMessage('assistant', '<div class="spinner"></div>思考中...');
+            
+            try {
+                const response = await apiCall('/query', {
+                    method: 'POST',
+                    body: JSON.stringify({ query: message, top_k: 5 })
+                });
+                
+                loadingMsg.innerHTML = response.answer || response.result || '抱歉，我无法回答这个问题。';
+            } catch (error) {
+                loadingMsg.innerHTML = `❌ 错误: ${error.message}`;
+                loadingMsg.classList.add('error');
+            }
+        }
+        
+        function addMessage(role, content) {
+            const msg = document.createElement('div');
+            msg.className = `message ${role}`;
+            msg.innerHTML = content;
+            chatMessages.appendChild(msg);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return msg;
+        }
+        
+        // ==================== Agents Functions ====================
+        async function loadAgents() {
+            try {
+                const data = await apiCall('/agents');
+                agents = data.agents || data || [];
+                renderAgents();
+            } catch (error) {
+                document.getElementById('agents-table').innerHTML = 
+                    `<tr><td colspan="4" style="color: #ef4444;">加载失败: ${error.message}</td></tr>`;
+            }
+        }
+        
+        function renderAgents() {
+            const tbody = document.getElementById('agents-table');
+            if (agents.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">暂无智能体</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = agents.map(agent => `
+                <tr>
+                    <td>${agent.name}</td>
+                    <td>${agent.description || '-'}</td>
+                    <td><span class="badge ${agent.status === 'active' ? 'badge-success' : 'badge-warning'}">${agent.status || 'active'}</span></td>
+                    <td>
+                        <button class="btn btn-primary" onclick="chatWithAgent('${agent.id}')">💬 对话</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        function showCreateAgentModal() {
+            document.getElementById('modal').style.display = 'flex';
+            document.getElementById('modal-title').textContent = '创建智能体';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">名称</label>
+                    <input type="text" class="form-input" id="agent-name" placeholder="输入智能体名称">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述</label>
+                    <textarea class="form-textarea" id="agent-desc" placeholder="描述这个智能体的功能"></textarea>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                    <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
+                    <button class="btn btn-primary" onclick="createAgent()">创建</button>
+                </div>
+            `;
+        }
+        
+        async function createAgent() {
+            const name = document.getElementById('agent-name').value.trim();
+            const description = document.getElementById('agent-desc').value.trim();
+            
+            if (!name) {
+                showToast('请输入名称', 'error');
+                return;
+            }
+            
+            try {
+                await apiCall('/agents', {
+                    method: 'POST',
+                    body: JSON.stringify({ name, description })
+                });
+                showToast('创建成功！');
+                document.getElementById('modal').style.display = 'none';
+                loadAgents();
+            } catch (error) {
+                showToast('创建失败: ' + error.message, 'error');
+            }
+        }
+        
+        function chatWithAgent(agentId) {
+            currentAgentId = agentId;
+            document.querySelector('[data-tab="chat"]').click();
+            showToast('已切换到与该智能体对话');
+        }
+        
+        // ==================== Knowledge Functions ====================
+        async function loadDocuments() {
+            try {
+                const data = await apiCall('/documents');
+                documents = data.documents || data || [];
+                renderDocuments();
+            } catch (error) {
+                document.getElementById('docs-list').innerHTML = 
+                    `<div style="color: #ef4444;">加载失败: ${error.message}</div>`;
+            }
+        }
+        
+        function renderDocuments() {
+            const container = document.getElementById('docs-list');
+            if (documents.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-muted); text-align: center;">暂无文档</div>';
+                return;
+            }
+            
+            container.innerHTML = documents.map(doc => `
+                <div style="padding: 0.75rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 500;">${doc.name || doc.filename || '文档'}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">${doc.created_at || doc.createdAt || ''}</div>
+                    </div>
+                    <button class="btn" style="color: #ef4444;" onclick="deleteDocument('${doc.id}')">删除</button>
+                </div>
+            `).join('');
+        }
+        
+        // File upload
+        document.getElementById('file-input').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            if (!files.length) return;
+            
+            const progress = document.getElementById('upload-progress');
+            
+            for (const file of files) {
+                progress.innerHTML = `<div style="color: var(--text-muted);">上传中: ${file.name}</div>`;
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/documents`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) throw new Error('上传失败');
+                    showToast(`${file.name} 上传成功！`);
+                } catch (error) {
+                    showToast(`${file.name} 上传失败: ${error.message}`, 'error');
+                }
+            }
+            
+            progress.innerHTML = '';
+            e.target.value = '';
+            loadDocuments();
+        });
+        
+        async function deleteDocument(id) {
+            if (!confirm('确定要删除这个文档吗？')) return;
+            
+            try {
+                await apiCall(`/documents/${id}`, { method: 'DELETE' });
+                showToast('删除成功');
+                loadDocuments();
+            } catch (error) {
+                showToast('删除失败: ' + error.message, 'error');
+            }
+        }
+        
+        // ==================== Workflows Functions ====================
+        async function loadWorkflows() {
+            try {
+                const data = await apiCall('/workflows');
+                workflows = data.workflows || data || [];
+                renderWorkflows();
+            } catch (error) {
+                document.getElementById('workflows-table').innerHTML = 
+                    `<tr><td colspan="4" style="color: #ef4444;">加载失败: ${error.message}</td></tr>`;
+            }
+        }
+        
+        function renderWorkflows() {
+            const tbody = document.getElementById('workflows-table');
+            if (workflows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">暂无工作流</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = workflows.map(wf => `
+                <tr>
+                    <td>${wf.name}</td>
+                    <td><span class="badge ${wf.status === 'active' ? 'badge-success' : 'badge-warning'}">${wf.status || 'draft'}</span></td>
+                    <td>${wf.execution_count || wf.executionCount || 0}</td>
+                    <td>
+                        <button class="btn btn-primary" onclick="executeWorkflow('${wf.id}')">▶ 执行</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        function showCreateWorkflowModal() {
+            document.getElementById('modal').style.display = 'flex';
+            document.getElementById('modal-title').textContent = '创建工作流';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">名称</label>
+                    <input type="text" class="form-input" id="wf-name" placeholder="输入工作流名称">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述</label>
+                    <textarea class="form-textarea" id="wf-desc" placeholder="描述这个工作流的功能"></textarea>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                    <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
+                    <button class="btn btn-primary" onclick="createWorkflow()">创建</button>
+                </div>
+            `;
+        }
+        
+        async function createWorkflow() {
+            const name = document.getElementById('wf-name').value.trim();
+            const description = document.getElementById('wf-desc').value.trim();
+            
+            if (!name) {
+                showToast('请输入名称', 'error');
+                return;
+            }
+            
+            try {
+                await apiCall('/workflows', {
+                    method: 'POST',
+                    body: JSON.stringify({ name, description, steps: [] })
+                });
+                showToast('创建成功！');
+                document.getElementById('modal').style.display = 'none';
+                loadWorkflows();
+            } catch (error) {
+                showToast('创建失败: ' + error.message, 'error');
+            }
+        }
+        
+        async function executeWorkflow(id) {
+            try {
+                await apiCall(`/workflows/${id}/execute`, {
+                    method: 'POST',
+                    body: JSON.stringify({ input: {} })
+                });
+                showToast('工作流执行成功！');
+                loadWorkflows();
+            } catch (error) {
+                showToast('执行失败: ' + error.message, 'error');
+            }
+        }
+        
+        // ==================== Initialize ====================
+        async function init() {
+            // Check API status
+            try {
+                const health = await apiCall('/health');
+                document.getElementById('api-status').classList.remove('offline');
+                document.getElementById('llm-info').textContent = health.llm || 'deepseek-chat';
+            } catch (error) {
+                document.getElementById('api-status').classList.add('offline');
+                document.getElementById('llm-info').textContent = '离线';
+            }
+            
+            // Load initial data
+            loadAgents();
+            loadDocuments();
+            loadWorkflows();
+        }
+        
+        init();
+    </script>
+</body>
+</html>
