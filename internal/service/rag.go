@@ -106,9 +106,13 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 	prompt := s.buildPrompt(req.Query, context)
 
 	resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
-		Model:  s.model,
-		Prompt: prompt,
-		System: "你是一个专业的智能助手。基于提供的上下文信息回答用户问题。如果上下文中没有相关信息，请诚实告知无法从提供的信息中找到答案。",
+		Model:       s.model,
+		Prompt:      prompt,
+		System:      `你是一个专业的智能助手。
+1. 如果上下文中有相关内容，优先基于上下文回答
+2. 如果上下文信息不足，但问题涉及实时数据（如时间、天气、新闻），请基于你的知识尽力回答
+3. 使用简洁清晰的中文回答`,
+		Temperature: 0.7,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("LLM 调用失败: %w", err)

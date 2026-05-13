@@ -370,7 +370,68 @@ func (t *FileReadTool) Execute(ctx context.Context, params map[string]interface{
 	}, nil
 }
 
-// ==================== 工具接口定义 ====================
+// ==================== 网络搜索工具 ====================
+
+// WebSearchTool 网络搜索工具 — Agent 联网获取实时信息
+type WebSearchTool struct {
+	httpClient interface{} // 可替换为具体 HTTP 客户端
+}
+
+func NewWebSearchTool() *WebSearchTool { return &WebSearchTool{} }
+func (t *WebSearchTool) Name() string   { return "web_search" }
+func (t *WebSearchTool) Description() string {
+	return "联网搜索互联网信息，获取实时数据、新闻、天气、时间等。当用户询问需要最新信息时使用此工具。"
+}
+func (t *WebSearchTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "搜索关键词或问题",
+			},
+		},
+		"required": []string{"query"},
+	}
+}
+
+func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	query, _ := params["query"].(string)
+	if query == "" {
+		query = "current time"
+	}
+
+	// 使用 DuckDuckGo 免费搜索 API
+	searchURL := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1", url.QueryEscape(query))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(searchURL)
+	if err != nil {
+		return &ToolResult{Content: fmt.Sprintf("搜索失败: %v", err)}, nil
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var result struct {
+		Abstract       string `json:"Abstract"`
+		AbstractText   string `json:"AbstractText"`
+		AbstractSource string `json:"AbstractSource"`
+		AbstractURL    string `json:"AbstractURL"`
+		Heading         string `json:"Heading"`
+	}
+	json.Unmarshal(body, &result)
+
+	if result.Abstract != "" {
+		content := result.Abstract
+		if result.AbstractURL != "" {
+			content += "\n\n来源: " + result.AbstractSource + " (" + result.AbstractURL + ")"
+		}
+		return &ToolResult{Content: content}, nil
+	}
+
+	return &ToolResult{Content: "抱歉，没有找到相关结果。请换个关键词试试。"}, nil
+}
 
 // SocialMediaService 社交媒体服务接口
 type SocialMediaService interface {
