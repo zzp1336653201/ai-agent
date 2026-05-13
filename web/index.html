@@ -603,9 +603,10 @@
                     body: JSON.stringify({ query: message, top_k: 5 })
                 });
                 
-                loadingMsg.innerHTML = response.answer || response.result || '抱歉，我无法回答这个问题。';
+                const data = response.data || response;
+                loadingMsg.innerHTML = data.answer || data.result || '抱歉，我无法回答这个问题。';
             } catch (error) {
-                loadingMsg.innerHTML = `❌ 错误: ${error.message}`;
+                loadingMsg.innerHTML = `❌ 错误: ${error.message}<br><br>💡 请检查：<br>1. config.yaml 中的 api_key 是否已填写真实 DeepSeek API Key<br>2. DeepSeek API 服务是否可访问<br>3. 向量数据库 (ChromaDB/Pgvector) 是否已启动`;
                 loadingMsg.classList.add('error');
             }
         }
