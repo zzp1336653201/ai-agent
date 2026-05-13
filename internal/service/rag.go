@@ -9,8 +9,6 @@ import (
 	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
 	"sirenagent/pkg/vector"
-
-	"go.uber.org/zap"
 )
 
 // RAGService 检索增强生成服务（升级版）
