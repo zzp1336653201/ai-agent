@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"ai-rag-knowledge-base/internal/model"
+	"sirenagent/internal/model"
 )
 
 type DocumentRepository struct{}
