@@ -136,8 +136,6 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 		result, err := s.engine.Run(ctx, dummyAgent, req.Query)
 		if err != nil {
 			// Agent 执行失败，降级到直接 LLM 调用
-			sugar := zap.NewExample().Sugar()
-			sugar.Warnf("Agent 执行失败，降级到 LLM: %v", err)
 			resp, llmErr := s.llm.Generate(ctx, &llm.GenerateRequest{
 				Model:       s.model,
 				Prompt:      req.Query,
@@ -148,8 +146,20 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 				return nil, fmt.Errorf("LLM 调用失败: %w", llmErr)
 			}
 			answer = resp.Content
-		} else {
+		} else if result.Answer != "" {
 			answer = result.Answer
+		} else {
+			// Agent 返回空答案，降级到 LLM
+			resp, llmErr := s.llm.Generate(ctx, &llm.GenerateRequest{
+				Model:       s.model,
+				Prompt:      req.Query,
+				System:      "你是一个友好的AI助手，请用简洁清晰的中文回答用户的问题。如果不知道答案，请诚实告知。",
+				Temperature: 0.7,
+			})
+			if llmErr != nil {
+				return nil, fmt.Errorf("LLM 调用失败: %w", llmErr)
+			}
+			answer = resp.Content
 		}
 
 	} else {
