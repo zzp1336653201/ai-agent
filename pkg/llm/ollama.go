@@ -209,16 +209,16 @@ func (o *OllamaProvider) Chat(ctx context.Context, messages []*Message) (*ChatRe
 	msg := &Message{Role: "assistant", Content: result.Message.Content}
 	if len(result.Message.ToolCalls) > 0 {
 		toolCalls := make([]ToolCall, 0, len(result.Message.ToolCalls))
-		for _, tc := range result.Message.ToolCalls {
-			tc := ToolCall{
-				Function: &FunctionCall{},
+		for _, ollamaTC := range result.Message.ToolCalls {
+			tc := ToolCall{}
+			if ollamaTC.ID != nil {
+				tc.ID = ollamaTC.ID.ID
 			}
-			if tc.ID != nil {
-				tc.ID = tc.ID.ID
-			}
-			if tc.Function != nil {
-				tc.Function.Name = tc.Function.Name
-				tc.Function.Arguments = tc.Function.Arguments
+			if ollamaTC.Function != nil {
+				tc.Function = &FunctionCall{
+					Name:      ollamaTC.Function.Name,
+					Arguments: ollamaTC.Function.Arguments,
+				}
 			}
 			toolCalls = append(toolCalls, tc)
 		}

@@ -126,7 +126,11 @@ func (o *OpenAIProvider) Chat(ctx context.Context, messages []*Message) (*ChatRe
 	}
 
 	return &ChatResponse{
-		Message:    resp.Message,
+		Message: &Message{
+			Role:       "assistant",
+			Content:    resp.Content,
+			ToolCalls:  resp.ToolCalls,
+		},
 		TokenUsage: resp.TokenUsage,
 	}, nil
 }
@@ -191,8 +195,7 @@ func (o *OpenAIProvider) doChat(ctx context.Context, req *GenerateRequest, strea
 			CompletionTokens: result.Usage.CompletionTokens,
 			TotalTokens:      result.Usage.TotalTokens,
 		},
-		ToolCalls:  choice.Message.ToolCalls,
-		Message:    choice.Message,
+		ToolCalls: choice.Message.ToolCalls,
 	}, nil
 }
 
