@@ -16,6 +16,7 @@ import (
 	"sirenagent/pkg/llm"
 	"sirenagent/pkg/vector"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
@@ -117,7 +118,21 @@ func main() {
 	// 11. 启动 HTTP 服务
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5500"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 	r.Use(gin.Recovery(), gin.Logger())
+
+	// 12. 托管前端静态文件
+	r.Static("/static", "./web")
+	r.GET("/", func(c *gin.Context) {
+		c.File("./web/index.html")
+	})
+
 	router.RegisterRoutes(r, agentHandler, workflowHandler, docHandler, queryHandler)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
