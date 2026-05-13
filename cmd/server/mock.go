@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"sirenagent/internal/model"
 	"sirenagent/internal/service"
 )
@@ -26,7 +28,7 @@ func (r *MockWorkflowRepository) List(status string, page, size int) ([]*model.W
 }
 func (r *MockWorkflowRepository) Update(w *model.Workflow) error                          { return nil }
 func (r *MockWorkflowRepository) Delete(id string) error                                 { return nil }
-func (r *MockWorkflowRepository) GetWorkflowForExecution(id string) (*model.Workflow, error) { return nil, nil }
+func (r *MockWorkflowRepository) GetWorkflowForExecution(ctx context.Context, id string) (*model.Workflow, error) { return nil, nil }
 func (r *MockWorkflowRepository) SaveExecution(exec *model.WorkflowExecution) error       { return nil }
 func (r *MockWorkflowRepository) GetExecution(id string) (*model.WorkflowExecution, error) { return nil, nil }
 func (r *MockWorkflowRepository) ListExecutions(workflowID string, status string, page, size int) ([]*model.WorkflowExecution, int64, error) {
