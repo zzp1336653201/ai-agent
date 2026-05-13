@@ -18,6 +18,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -38,12 +40,34 @@ func main() {
 	llmProvider := llm.NewLLMProvider(cfg.LLM.Provider, cfg.LLM.Endpoint, cfg.LLM.APIKey)
 	sugar.Infof("✅ LLM 提供者: %s (%s)", cfg.LLM.Provider, cfg.LLM.Model)
 
-	// 4. 初始化向量数据库
-	vectorDB, err := vector.NewChromaDB(cfg.VectorDB.Endpoint)
-	if err != nil {
-		logger.Fatal("向量数据库初始化失败", zap.Error(err))
+	// 4. 初始化向量数据库（支持 ChromaDB / Pgvector）
+	var vectorDB vector.VectorProvider
+	if cfg.VectorDB.Provider == "pgvector" {
+		// 连接 PostgreSQL 作为向量数据库
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode)
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err != nil {
+			logger.Fatal("PostgreSQL 连接失败", zap.Error(err))
+		}
+		sqlDB, _ := db.DB()
+		defer sqlDB.Close()
+
+		pgVDB, err := vector.NewPgVectorDB(db)
+		if err != nil {
+			logger.Fatal("Pgvector 初始化失败", zap.Error(err))
+		}
+		vectorDB = pgVDB
+		sugar.Infof("✅ 向量数据库: Pgvector (PostgreSQL)")
+	} else {
+		// 使用 ChromaDB
+		chromaDB, err := vector.NewChromaDB(cfg.VectorDB.Endpoint)
+		if err != nil {
+			logger.Fatal("向量数据库初始化失败", zap.Error(err))
+		}
+		vectorDB = chromaDB
+		sugar.Infof("✅ 向量数据库: ChromaDB @ %s", cfg.VectorDB.Endpoint)
 	}
-	sugar.Infof("✅ 向量数据库: ChromaDB @ %s", cfg.VectorDB.Endpoint)
 
 	// 5. 初始化记忆管理器
 	memoryMgr := core.NewInMemoryMemoryManager()
@@ -62,7 +86,7 @@ func main() {
 	agentEngine := core.NewAgentEngine(llmProvider, vectorDB, memoryMgr, engineConfig)
 
 	// 注册内置工具（工具调用系统）
-	registerBuiltInTools(agentEngine, vectorDB)
+	registerBuiltInTools(agentEngine)
 	sugar.Infof("✅ 已注册 %d 个内置工具", len(agentEngine.ListTools()))
 
 	// 设置 Prompt 管理器
@@ -121,10 +145,10 @@ func main() {
 }
 
 // registerBuiltInTools 注册内置工具集
-func registerBuiltInTools(engine *core.AgentEngine, vdb *vector.ChromaDB) {
+func registerBuiltInTools(engine *core.AgentEngine) {
 	engine.RegisterTool(core.NewWebSearchTool())       // 网络搜索
-	engine.RegisterTool(core.NewRAGSearchTool(engine))   // RAG 知识库检索
-	engine.RegisterTool(core.NewHTTPRequestTool())      // HTTP API 调用
+	engine.RegisterTool(core.NewRAGSearchTool(engine))  // RAG 知识库检索
+	engine.RegisterTool(core.NewHTTPRequestTool())     // HTTP API 调用
 	engine.RegisterTool(core.NewCalculatorTool())       // 计算器
 	engine.RegisterTool(core.NewFileReadTool())         // 文件读取
 }

@@ -108,7 +108,7 @@ func setDefaults() {
 	viper.SetDefault("llm.model", "llama3.2")
 	viper.SetDefault("llm.max_tokens", 2048)
 	viper.SetDefault("llm.temperature", 0.7)
-	viper.SetDefault("vector_db.provider", "chromadb")
+	viper.SetDefault("vector_db.provider", "pgvector")
 	viper.SetDefault("vector_db.endpoint", "http://localhost:8000")
 	viper.SetDefault("vector_db.collection", "agent_knowledge")
 	viper.SetDefault("database.host", "localhost")
