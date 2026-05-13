@@ -110,11 +110,7 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 
 	if len(sourceInfos) > 0 || len(memories) > 0 {
 		// 有上下文 → 走传统 RAG 流程
-		method = method
-
-		// 构建上下文
 		context := s.buildContext(vecResults, memories)
-
 		prompt := s.buildPrompt(req.Query, context)
 		resp, err := s.llm.Generate(ctx, &llm.GenerateRequest{
 			Model:       s.model,
@@ -159,11 +155,11 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 	for _, si := range sourceInfos { if si.Score > bestScore { bestScore = si.Score } }
 
 	return &QueryResponse{
-		Answer:           resp.Content,
+		Answer:           answer,
 		Sources:          sourceInfos,
 		MemoryUsed:       memories,
 		Score:            bestScore,
-		TokenUsage:       resp.TokenUsage,
+		TokenUsage:       llm.TokenUsage{},
 		RetrievalMethod: method,
 	}, nil
 }
