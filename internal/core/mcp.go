@@ -64,13 +64,20 @@ func NewStdioMCPClient(name, command string, args []string, env map[string]strin
 		name:   name,
 		cmd:    cmd,
 		stdin:  stdin,
-		reader: bufio.NewReaderSize(stdout, 64*1024), // 64KB buffer
+		reader: bufio.NewReaderSize(stdout, 64*1024),
 		nextID: 1,
 	}
 
-	// 初始化时获取工具列表（带超时控制，但保留进程运行）
+	// 初始化时执行 MCP 握手（initialize → initialized → tools/list）
 	done := make(chan struct{})
 	go func() {
+		err := client.initialize()
+		if err != nil {
+			fmt.Printf("[MCP:%s] 初始化握手失败: %v\n", name, err)
+			close(done)
+			return
+		}
+
 		tools, err := client.listTools()
 		if err != nil {
 			fmt.Printf("[MCP:%s] 获取工具列表失败: %v\n", name, err)
@@ -146,6 +153,59 @@ func (c *StdioMCPClient) CallTool(name string, params map[string]interface{}) (s
 	}
 
 	return strings.Join(texts, "\n"), nil
+}
+
+// initialize 执行 MCP 初始化握手（标准 MCP 协议要求）
+// 必须先调用 initialize，收到响应后才能进行后续通信
+func (c *StdioMCPClient) initialize() error {
+	// Step 1: 发送 initialize 请求
+	initReq := mcpJSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "sirenagent",
+				"version": "1.0.0",
+			},
+		},
+	}
+
+	respBody, err := c.sendRequest(initReq)
+	if err != nil {
+		return fmt.Errorf("initialize 请求失败: %w", err)
+	}
+
+	var result struct {
+		Result *json.RawMessage `json:"result,omitempty"`
+		Error  *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("解析 initialize 响应失败: %w", err)
+	}
+	if result.Error != nil {
+		return fmt.Errorf("initialize 错误: %s", result.Error.Message)
+	}
+
+	// Step 2: 发送 initialized 通知（无需等待响应）
+	notif := mcpJSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+		Params:  map[string]interface{}{},
+	}
+
+	notifData, _ := json.Marshal(notif)
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(notifData))
+	if _, err := c.stdin.Write([]byte(header + string(notifData))); err != nil {
+		return fmt.Errorf("发送 initialized 通知失败: %w", err)
+	}
+
+	fmt.Printf("[MCP:%s] 初始化握手完成\n", c.name)
+	return nil
 }
 
 // listTools 获取远程工具列表
