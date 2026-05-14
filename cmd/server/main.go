@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"sirenagent/internal/config"
 	"sirenagent/internal/core"
@@ -182,32 +185,89 @@ func registerBuiltInTools(engine *core.AgentEngine) {
 // registerMCPTools 初始化 MCP 外部工具并注册到 Agent 引擎
 func registerMCPTools(engine *core.AgentEngine, mcpCfg *config.MCPConfig) int {
 	totalTools := 0
-	var clients []*core.StdioMCPClient
 
 	for _, srv := range mcpCfg.Servers {
-		client, err := core.NewStdioMCPClient(srv.Name, srv.Command, srv.Args, srv.Env)
-		if err != nil {
-			fmt.Printf("⚠️  MCP 服务 %s 连接失败: %v\n", srv.Name, err)
-			continue
-		}
-		clients = append(clients, client)
+		// 检查是否使用 HTTP 模式（args 包含 --port）
+		port := extractPort(srv.Args)
+		if port > 0 {
+			// HTTP 模式：启动子进程 + HTTP 客户端
+			startMCPProcess(srv.Command, srv.Args, srv.Env)
+			time.Sleep(2 * time.Second) // 等待服务启动
 
-		// 将远程工具包装为本地 Tool 并注册
-		for _, toolInfo := range client.ListTools() {
-			// MCP 工具名添加前缀避免与内置工具重名
-			wrappedTool := core.AsMCPTool(client, toolInfo)
-			engine.RegisterTool(wrappedTool)
-			totalTools++
-			fmt.Printf("  ➕ MCP 工具: %s — %s\n", toolInfo.Name, toolInfo.Description)
-		}
-	}
+			client := core.NewHTTPMCPClient(srv.Name, fmt.Sprintf("http://localhost:%d", port))
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := client.Initialize(ctx); err != nil {
+				fmt.Printf("⚠️  MCP HTTP %s 连接失败: %v\n", srv.Name, err)
+				cancel()
+				continue
+			}
+			cancel()
 
-	// 注册关闭钩子
-	if len(clients) > 0 {
-		// 简单的 defer 清理
+			for _, toolInfo := range client.ListTools() {
+				wrappedTool := core.AsHTTPMCPTool(client, toolInfo)
+				engine.RegisterTool(wrappedTool)
+				totalTools++
+				fmt.Printf("  ➕ MCP 工具: %s — %s\n", toolInfo.Name, truncateString(toolInfo.Description, 60))
+			}
+		} else {
+			// Stdio 模式（兼容）
+			client, err := core.NewStdioMCPClient(srv.Name, srv.Command, srv.Args, srv.Env)
+			if err != nil {
+				fmt.Printf("⚠️  MCP 服务 %s 连接失败: %v\n", srv.Name, err)
+				continue
+			}
+			// 等待异步初始化完成
+			time.Sleep(3 * time.Second)
+			for _, toolInfo := range client.ListTools() {
+				wrappedTool := core.AsMCPTool(client, toolInfo)
+				engine.RegisterTool(wrappedTool)
+				totalTools++
+				fmt.Printf("  ➕ MCP 工具: %s\n", toolInfo.Name)
+			}
+		}
 	}
 
 	return totalTools
+}
+
+// extractPort 从 args 中提取 --port 端口号
+func extractPort(args []string) int {
+	for i, a := range args {
+		if a == "--port" && i+1 < len(args) {
+			port := 0
+			fmt.Sscanf(args[i+1], "%d", &port)
+			return port
+		}
+	}
+	return 0
+}
+
+// startMCPProcess 后台启动 MCP 子进程
+func startMCPProcess(command string, args []string, env map[string]string) {
+	cmd := exec.Command(command, args...)
+	if len(env) > 0 {
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		fmt.Printf("⚠️  启动 MCP 进程失败: %v\n", err)
+		return
+	}
+	// 后台 goroutine 等待进程退出
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fmt.Printf("⚠️  MCP 进程已退出: %v\n", err)
+		}
+	}()
+	fmt.Printf("  🚀 MCP 后台进程已启动 (PID: %d)\n", cmd.Process.Pid)
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // registerPromptTemplates 注册 Prompt 模板
