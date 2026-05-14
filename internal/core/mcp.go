@@ -38,10 +38,7 @@ type MCPToolInfo struct {
 
 // NewStdioMCPClient 创建 stdio MCP 客户端并初始化
 func NewStdioMCPClient(name, command string, args []string, env map[string]string) (*StdioMCPClient, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, command, args...)
+	cmd := exec.Command(command, args...)
 
 	// 设置环境变量
 	if len(env) > 0 {
@@ -58,7 +55,7 @@ func NewStdioMCPClient(name, command string, args []string, env map[string]strin
 		return nil, fmt.Errorf("[MCP:%s] 创建 stdout 管道失败: %w", name, err)
 	}
 
-	// 启动进程
+	// 启动进程（注意：不用 CommandContext，进程需要在后台持续运行）
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("[MCP:%s] 启动进程失败: %w", name, err)
 	}
@@ -71,17 +68,28 @@ func NewStdioMCPClient(name, command string, args []string, env map[string]strin
 		nextID: 1,
 	}
 
-	// 初始化时获取工具列表
-	tools, err := client.listTools()
-	if err != nil {
-		// 获取工具列表失败不是致命错误，记录日志
-		fmt.Printf("[MCP:%s] 获取工具列表失败: %v\n", name, err)
-	} else {
+	// 初始化时获取工具列表（带超时控制，但保留进程运行）
+	done := make(chan struct{})
+	go func() {
+		tools, err := client.listTools()
+		if err != nil {
+			fmt.Printf("[MCP:%s] 获取工具列表失败: %v\n", name, err)
+			close(done)
+			return
+		}
 		client.tools = tools
 		fmt.Printf("[MCP:%s] 已连接，发现 %d 个工具\n", name, len(tools))
 		for _, t := range tools {
 			fmt.Printf("  - %s: %s\n", t.Name, truncateString(t.Description, 60))
 		}
+		close(done)
+	}()
+
+	// 等待工具列表获取完成或超时（不杀掉进程）
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		fmt.Printf("[MCP:%s] 获取工具列表超时，进程仍在运行\n", name)
 	}
 
 	return client, nil
@@ -107,14 +115,8 @@ func (c *StdioMCPClient) Name() string {
 
 // CallTool 调用远程工具
 func (c *StdioMCPClient) CallTool(name string, params map[string]interface{}) (string, error) {
-	c.mu.Lock()
-	id := c.nextID
-	c.nextID++
-	c.mu.Unlock()
-
 	req := mcpJSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      id,
 		Method:  "tools/call",
 		Params: map[string]interface{}{
 			"name":      name,
@@ -132,12 +134,10 @@ func (c *StdioMCPClient) CallTool(name string, params map[string]interface{}) (s
 		return "", fmt.Errorf("[MCP:%s] 解析结果失败: %w", c.name, err)
 	}
 
-	// 检查错误
 	if result.Error != nil {
 		return "", fmt.Errorf("[MCP:%s] 工具 %s 返回错误: %s", c.name, name, result.Error.Message)
 	}
 
-	// 提取内容
 	var texts []string
 	if result.Result != nil {
 		for _, block := range result.Result.Content {
@@ -152,7 +152,6 @@ func (c *StdioMCPClient) CallTool(name string, params map[string]interface{}) (s
 func (c *StdioMCPClient) listTools() ([]MCPToolInfo, error) {
 	req := mcpJSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      0,
 		Method:  "tools/list",
 		Params:  map[string]interface{}{},
 	}
@@ -178,32 +177,37 @@ func (c *StdioMCPClient) listTools() ([]MCPToolInfo, error) {
 	return result.Result.Tools, nil
 }
 
-// sendRequest 发送 JSON-RPC 请求并读取响应
+// sendRequest 发送 JSON-RPC 请求并读取响应（持锁保证原子性）
 func (c *StdioMCPClient) sendRequest(req mcpJSONRPCRequest) (json.RawMessage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 生成递增 ID
+	if req.ID == 0 {
+		req.ID = c.nextID
+		c.nextID++
+	} else if req.ID >= c.nextID {
+		c.nextID = req.ID + 1
+	}
+
 	reqData, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// 写入 Content-Length 头 + 空行 + JSON body（标准 MCP stdio 协议）
+	// 标准 MCP stdio 协议：Content-Length 头 + 空行 + JSON body
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(reqData))
 	msg := header + string(reqData)
 
-	c.mu.Lock()
 	if _, err := c.stdin.Write([]byte(msg)); err != nil {
-		c.mu.Unlock()
 		return nil, fmt.Errorf("写入 stdin 失败: %w", err)
 	}
-	c.mu.Unlock()
 
-	return c.readResponse()
+	return c.readResponseLocked()
 }
 
-// readResponse 读取 JSON-RPC 响应（标准 MCP stdio 协议：Content-Length 头 + JSON body）
-func (c *StdioMCPClient) readResponse() (json.RawMessage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// readResponseLocked 读取响应（调用方已持锁）
+func (c *StdioMCPClient) readResponseLocked() (json.RawMessage, error) {
 	const timeout = 30 * time.Second
 	deadline := time.Now().Add(timeout)
 
@@ -218,12 +222,9 @@ func (c *StdioMCPClient) readResponse() (json.RawMessage, error) {
 			return nil, fmt.Errorf("读取响应头失败: %w", err)
 		}
 
-		// 去掉 \r\n 或 \n 后缀
 		line = strings.TrimRight(line, "\r\n")
-
 		if line == "" {
-			// 空行表示 Header 结束
-			break
+			break // 空行 = Header 结束
 		}
 
 		if strings.HasPrefix(line, "Content-Length:") {
@@ -238,7 +239,6 @@ func (c *StdioMCPClient) readResponse() (json.RawMessage, error) {
 		return nil, fmt.Errorf("无效的 Content-Length: %d", contentLength)
 	}
 
-	// 精确读取 ContentLength 字节
 	body := make([]byte, contentLength)
 	if _, err := io.ReadFull(c.reader, body); err != nil {
 		return nil, fmt.Errorf("读取响应body失败: %w", err)
