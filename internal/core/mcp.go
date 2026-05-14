@@ -181,6 +181,7 @@ func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
