@@ -163,14 +163,13 @@ func (c *HTTPMCPClient) CallTool(name string, params map[string]interface{}) (st
 	return strings.Join(texts, "\n"), nil
 }
 
-// doRequest 发送 JSON-RPC 请求（HTTP POST）
+// doRequest 发送 JSON-RPC 请求（HTTP POST），支持 SSE 响应
 func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error) {
 	c.mu.Lock()
 	if req.ID == 0 {
 		req.ID = c.nextID
 		c.nextID++
 	}
-	// 带上已持有的 session ID
 	currentSession := c.sessionID
 	c.mu.Unlock()
 
@@ -195,7 +194,7 @@ func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error
 	}
 	defer resp.Body.Close()
 
-	// 提取 session ID（服务器在首次初始化时返回）
+	// 提取 session ID
 	if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
 		c.mu.Lock()
 		if c.sessionID == "" {
@@ -209,7 +208,36 @@ func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}
 
+	// 检查 Content-Type，如果是 text/event-stream 则解析 SSE
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/event-stream") {
+		return parseSSEJSON(body)
+	}
+
 	return body, nil
+}
+
+// parseSSEJSON 从 SSE 响应中提取 JSON-RPC 数据
+// SSE 格式：
+//   event: message\n
+//   data: {"jsonrpc":"2.0","id":1,"result":{...}}\n
+//   \n
+func parseSSEJSON(body []byte) (json.RawMessage, error) {
+	lines := strings.Split(string(body), "\n")
+	var dataLines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data: ") {
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+
+	if len(dataLines) == 0 {
+		return nil, fmt.Errorf("SSE 响应中未找到 data 字段 (原始body: %s)", truncateString(string(body), 200))
+	}
+
+	fullJSON := strings.Join(dataLines, "\n")
+	return []byte(fullJSON), nil
 }
 
 // ==================== Stdio MCP 客户端保留（兼容）====================
