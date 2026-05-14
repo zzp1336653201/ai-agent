@@ -127,7 +127,66 @@
             max-width: 80%;
             padding: 1rem;
             border-radius: 1rem;
-            line-height: 1.6;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        .message p {
+            margin: 0.6em 0;
+        }
+        .message p:first-child { margin-top: 0; }
+        .message p:last-child { margin-bottom: 0; }
+        
+        .message h1, .message h2, .message h3, .message h4 {
+            margin: 0.8em 0 0.3em 0;
+            color: var(--primary);
+        }
+        .message h1:first-child, .message h2:first-child, .message h3:first-child { margin-top: 0; }
+        
+        .message ul, .message ol {
+            padding-left: 1.5em;
+            margin: 0.5em 0;
+        }
+        .message li {
+            margin: 0.4em 0;
+        }
+        .message li:first-child { margin-top: 0; }
+        .message li:last-child { margin-bottom: 0; }
+        
+        .message table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 0.8em 0;
+            font-size: 0.9em;
+        }
+        .message th, .message td {
+            border: 1px solid var(--border);
+            padding: 0.5em 0.8em;
+            text-align: left;
+        }
+        .message th {
+            background: var(--primary-dark);
+            color: white;
+        }
+        .message tr:nth-child(even) {
+            background: rgba(255,255,255,0.03);
+        }
+        
+        .message strong {
+            color: #fbbf24;
+        }
+        .message code {
+            background: rgba(255,255,255,0.1);
+            padding: 0.15em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        .message blockquote {
+            border-left: 3px solid var(--primary);
+            padding-left: 1em;
+            margin: 0.8em 0;
+            color: var(--text-muted);
         }
         
         .message.user {
@@ -604,7 +663,8 @@
                 });
                 
                 const data = response.data || response;
-                loadingMsg.innerHTML = data.answer || data.result || '抱歉，我无法回答这个问题。';
+                const rawAnswer = data.answer || data.result || '抱歉，我无法回答这个问题。';
+                loadingMsg.innerHTML = renderMarkdown(rawAnswer);
             } catch (error) {
                 loadingMsg.innerHTML = `❌ 错误: ${error.message}<br><br>💡 请检查：<br>1. config.yaml 中的 api_key 是否已填写真实 DeepSeek API Key<br>2. DeepSeek API 服务是否可访问<br>3. 向量数据库 (ChromaDB/Pgvector) 是否已启动`;
                 loadingMsg.classList.add('error');
@@ -875,6 +935,82 @@
         }
         
         init();
+    </script>
+    <script>
+        // 简易 Markdown 渲染器（渲染成安全的 HTML）
+        function renderMarkdown(text) {
+            if (!text) return '';
+            // 转义 HTML 特殊字符
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            
+            // 行内代码 `code`
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            
+            // 加粗 **text**
+            html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            
+            // 链接 [text](url)
+            html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+            
+            // 分割成行处理
+            const lines = html.split('\n');
+            let result = [];
+            let inList = false;
+            let listType = null;
+            
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+                let trimmed = line.trim();
+                
+                // 空行
+                if (trimmed === '') {
+                    if (inList) { result.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; listType = null; }
+                    continue;
+                }
+                
+                // 标题
+                if (/^#{1,6}\s/.test(trimmed)) {
+                    if (inList) { result.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; listType = null; }
+                    const level = trimmed.match(/^(#+)/)[1].length;
+                    const content = trimmed.replace(/^#+\s*/, '');
+                    result.push(`<h${level}>${content}</h${level}>`);
+                    continue;
+                }
+                
+                // 无序列表
+                if (/^[-*]\s/.test(trimmed)) {
+                    if (!inList || listType !== 'ul') {
+                        if (inList) result.push('</ul>');
+                        result.push('<ul>');
+                        inList = true; listType = 'ul';
+                    }
+                    result.push(`<li>${trimmed.replace(/^[-*]\s*/, '')}</li>`);
+                    continue;
+                }
+                
+                // 有序列表
+                if (/^\d+\.\s/.test(trimmed)) {
+                    if (!inList || listType !== 'ol') {
+                        if (inList) result.push('</ol>');
+                        result.push('<ol>');
+                        inList = true; listType = 'ol';
+                    }
+                    result.push(`<li>${trimmed.replace(/^\d+\.\s*/, '')}</li>`);
+                    continue;
+                }
+                
+                // 普通段落
+                if (inList) { result.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; listType = null; }
+                result.push(`<p>${trimmed}</p>`);
+            }
+            
+            if (inList) result.push(listType === 'ul' ? '</ul>' : '</ol>');
+            
+            return result.join('\n');
+        }
     </script>
 </body>
 </html>

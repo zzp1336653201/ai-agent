@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -203,6 +204,9 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 	result.TokenUsage = totalToken
 	fmt.Printf("%s 推理完成, 轮次:%d, 工具调用:%d次, Token:%d\n", logPrefix, result.Turns, len(result.ToolCalls), totalToken.TotalTokens)
+
+	// 格式化答案排版（分段、列表间距等）
+	result.Answer = formatAnswer(result.Answer)
 
 	// 6. 保存本次交互到短期记忆
 	go func() {
@@ -625,4 +629,34 @@ func isRealtimeQuery(message string) bool {
 	}
 
 	return false
+}
+
+// formatAnswer 美化 AI 回答排版
+// 规则：
+//   - 标题前后加空行
+//   - 列表项之间加空行
+//   - 连续的紧凑段落自动分段
+//   - 中文与数字/英文之间加空格
+func formatAnswer(s string) string {
+	if s == "" {
+		return s
+	}
+
+	// 1. 标题前后加空行（## 或 ### 等）
+	headingRe := regexp.MustCompile(`(?m)^(#{1,6}\s+.+)$`)
+	s = headingRe.ReplaceAllString(s, "\n$1\n")
+
+	// 2. 列表项（- 或 1. 开头）之间加空行
+	s = regexp.MustCompile(`(\n(?:[-*]\s|\d+\.\s).+)\n((?:[-*]\s|\d+\.\s).+)`).ReplaceAllString(s, "$1\n$2")
+
+	// 3. 表格前后加空行（| xxx | 开头）
+	s = regexp.MustCompile(`(?m)^(\|.+\|)`).ReplaceAllString(s, "\n$1\n")
+
+	// 4. 多个空行合并为单个空行
+	s = regexp.MustCompile(`\n{3,}`).ReplaceAllString(s, "\n\n")
+
+	// 5. 修剪首尾空行
+	s = strings.TrimSpace(s)
+
+	return s
 }
