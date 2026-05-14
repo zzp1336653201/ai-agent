@@ -22,6 +22,7 @@ type GenerateRequest struct {
 	Temperature float64           `json:"temperature,omitempty"`
 	System      string            `json:"system,omitempty"`
 	Tools       []ToolDefinition  `json:"tools,omitempty"`
+	ToolChoice  interface{}       `json:"tool_choice,omitempty"` // "auto" | "required" | "none" | {"type":"function","function":{"name":"xxx"}}
 	Messages    []*Message        `json:"messages,omitempty"` // Chat 模式使用
 }
 

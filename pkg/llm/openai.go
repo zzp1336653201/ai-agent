@@ -23,6 +23,7 @@ type openAIChatRequest struct {
 	MaxTokens   int             `json:"max_tokens,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice  interface{}     `json:"tool_choice,omitempty"` // "auto" | "required" | "none" | {...}
 	Stream      bool            `json:"stream"`
 }
 
@@ -74,6 +75,8 @@ func (o *OpenAIProvider) Generate(ctx context.Context, req *GenerateRequest) (*G
 		Model:       req.Model,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
+		Tools:       req.Tools,
+		ToolChoice:  req.ToolChoice,
 		Messages:    messages,
 	}, false)
 }
@@ -161,6 +164,7 @@ func (o *OpenAIProvider) doChat(ctx context.Context, req *GenerateRequest, strea
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Tools:       req.Tools,
+		ToolChoice:  req.ToolChoice,
 		Stream:      stream,
 	}
 
@@ -216,6 +220,8 @@ func (o *OpenAIProvider) doStreamRequest(ctx context.Context, req *GenerateReque
 		Messages:    req.Messages,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
+		Tools:       req.Tools,
+		ToolChoice:  req.ToolChoice,
 		Stream:      true,
 	}
 

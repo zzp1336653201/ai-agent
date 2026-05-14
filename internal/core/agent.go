@@ -55,7 +55,17 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	// 5. ReAct 推理循环
 	var totalToken llm.TokenUsage
 	tools := e.ToolsToLLMFormat()
-	
+	numTools := len(tools)
+	logPrefix := fmt.Sprintf("[Agent:%s]", agent.Name)
+
+	fmt.Printf("%s 开始推理, 用户消息: %s, 可用工具: %d个\n", logPrefix, truncateForLog(userMessage, 80), numTools)
+
+	// 判断用户消息是否属于"实时数据"类 — 如果是，强制优先调工具
+	needsRealTime := isRealtimeQuery(userMessage)
+	if needsRealTime && numTools > 0 {
+		fmt.Printf("%s [决策] 用户问题涉及实时数据，启用强制工具调用模式\n", logPrefix)
+	}
+
 	for turn := 0; turn < e.config.MaxIterations; turn++ {
 		result.Turns = turn + 1
 
@@ -79,12 +89,20 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 		// 调用 LLM（带工具定义）
 		req := &llm.GenerateRequest{
-			Model:       "deepseek-chat", // 可从配置获取
+			Model:       "deepseek-chat",
 			Prompt:      historyPrompt,
 			System:      systemPrompt,
 			Tools:       tools,
 			Temperature: 0.7,
 		}
+
+		// 实时数据类问题 + 第一轮 → 设置 tool_choice=auto 确保 LLM 优先调工具
+		if needsRealTime && turn == 0 {
+			req.ToolChoice = "auto"
+			fmt.Printf("%s [第%d轮] 启用 tool_choice=auto 强制优先工具调用\n", logPrefix, turn+1)
+		}
+
+		fmt.Printf("%s [第%d轮] 调用 LLM (tools=%d)...\n", logPrefix, turn+1, len(tools))
 		resp, err := e.llm.Generate(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("第%d轮 LLM 调用失败: %w", turn+1, err)
@@ -94,20 +112,26 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 		// 检查是否有工具调用（两种方式：1. Function Calling 2. 文本解析）
 		toolCalls := resp.ToolCalls
-		
+
 		// 如果没有 function calling，尝试从文本中解析工具调用
 		if len(toolCalls) == 0 {
 			toolCalls = e.parseToolCallsFromText(resp.Content)
+			if len(toolCalls) > 0 {
+				fmt.Printf("%s [第%d轮] 从文本解析到 %d 个工具调用\n", logPrefix, turn+1, len(toolCalls))
+			}
+		} else {
+			fmt.Printf("%s [第%d轮] LLM 返回 %d 个原生函数调用\n", logPrefix, turn+1, len(toolCalls))
 		}
 
 		if len(toolCalls) == 0 {
 			// 无工具调用，说明是最终答案
 			result.Answer = resp.Content
+			fmt.Printf("%s [第%d轮] 无工具调用，直接返回答案 (长度:%d)\n", logPrefix, turn+1, len(resp.Content))
 			break
 		}
 
 		// 有工具调用：执行工具并注入结果
-		for _, tc := range resp.ToolCalls {
+		for _, tc := range toolCalls {
 			record := &ToolCallRecord{
 				ToolName: tc.Function.Name,
 			}
@@ -124,18 +148,24 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			}
 			record.Input = params
 
+			fmt.Printf("%s [第%d轮] → 执行工具: %s, 参数: %v\n", logPrefix, turn+1, tc.Function.Name, params)
+
 			// 执行工具
 			tool, exists := e.tools[tc.Function.Name]
 			if !exists {
 				record.Output = NewToolError(fmt.Errorf("未知工具: %s", tc.Function.Name))
+				fmt.Printf("%s [第%d轮] ✗ 未知工具: %s\n", logPrefix, turn+1, tc.Function.Name)
 			} else {
 				toolCtx, cancel := context.WithTimeout(ctx, time.Duration(e.config.ToolsTimeout)*time.Second)
 				output, toolErr := tool.Execute(toolCtx, params)
 				cancel()
 				if toolErr != nil {
 					record.Output = NewToolError(toolErr)
+					fmt.Printf("%s [第%d轮] ✗ 工具 %s 执行错误: %v\n", logPrefix, turn+1, tc.Function.Name, toolErr)
 				} else {
 					record.Output = output
+					outputPreview := truncateForLog(output.Content, 120)
+					fmt.Printf("%s [第%d轮] ✓ 工具 %s 执行成功, 结果: %s\n", logPrefix, turn+1, tc.Function.Name, outputPreview)
 				}
 			}
 
@@ -144,9 +174,9 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 			// 将工具调用和结果加入消息历史
 			assistantMsg := &llm.Message{
-				Role:       "assistant",
-				Content:    resp.Content,
-				ToolCalls:  []llm.ToolCall{tc}, // 直接使用 tc 值
+				Role:      "assistant",
+				Content:   resp.Content,
+				ToolCalls: []llm.ToolCall{tc},
 			}
 			messages = append(messages, assistantMsg)
 
@@ -172,6 +202,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	}
 
 	result.TokenUsage = totalToken
+	fmt.Printf("%s 推理完成, 轮次:%d, 工具调用:%d次, Token:%d\n", logPrefix, result.Turns, len(result.ToolCalls), totalToken.TotalTokens)
 
 	// 6. 保存本次交互到短期记忆
 	go func() {
@@ -220,70 +251,102 @@ func (e *AgentEngine) buildSystemPrompt(agent *model.Agent) string {
 	parts = append(parts, agent.SystemPrompt)
 	parts = append(parts, "")
 
-	// 能力描述
-	parts = append(parts, "# 你的能力")
-	parts = append(parts, "- 你可以调用多种工具来完成用户的请求")
-	parts = append(parts, "- 你会通过「思考→行动→观察」的循环来逐步解决问题")
-	parts = append(parts, "")
-
 	// 工具列表
 	if len(e.tools) > 0 {
-		parts = append(parts, "# 可用工具")
+		parts = append(parts, "# ===== 可用工具 (使用 Function Calling 调用) =====")
 		for name, tool := range e.tools {
 			parts = append(parts, fmt.Sprintf("- **%s**: %s", name, tool.Description()))
 		}
 		parts = append(parts, "")
 	}
 
-	// 行为约束
-	parts = append(parts, "# 行为规范")
-	parts = append(parts, "1. 如果用户询问实时信息（时间、天气、新闻等），必须使用工具获取")
-	parts = append(parts, "2. 每次只调用一个工具，观察结果后再决定下一步")
-	parts = append(parts, "3. 回答要简洁准确，使用中文")
+	// ========== 实时数据触发规则（强制优先） ==========
+	parts = append(parts, "# ⚠️ 实时数据触发规则（必须遵守）")
+	parts = append(parts, "")
+	parts = append(parts, "【强制规则】当用户询问以下任何类型的信息时，你必须通过工具获取，绝不能依赖自身的训练数据回答：")
+	parts = append(parts, "")
+	parts = append(parts, "1. **时间日期类**: 当前时间、今天日期、星期几、现在几点、当前年份等任何与「现在」相关的信息")
+	parts = append(parts, "2. **天气类**: 天气情况、温度、天气预报、空气质量等")
+	parts = append(parts, "3. **新闻类**: 最新消息、热点资讯、时事要闻、行业动态等")
+	parts = append(parts, "4. **价格/行情类**: 股票价格、汇率、加密货币价格、商品价格等")
+	parts = append(parts, "5. **地理位置/导航类**: 当前位置、路线规划、距离计算、周边信息等")
+	parts = append(parts, "6. **知识查询类**: 你不确定的知识点、最新技术、人物、事件等")
+	parts = append(parts, "7. **网络数据类**: 网页内容、API 数据、实时统计信息等")
+	parts = append(parts, "")
+	parts = append(parts, "违规后果：如果使用自身知识回答而非调用工具获取实时数据，将被视为错误行为。")
 	parts = append(parts, "")
 
-	// 输出格式
-	parts = append(parts, "# 重要：工具调用格式")
-	parts = append(parts, "当你需要使用工具时，必须使用以下 JSON 格式输出（不要有任何其他文字）：")
-	parts = append(parts, `{"tool": "工具名称", "params": {"参数名": "参数值"}}`)
+	// 行为规范
+	parts = append(parts, "# 工作流程")
+	parts = append(parts, "1. 收到用户问题后，首先判断是否需要实时数据（参考上方分类）")
+	parts = append(parts, "2. 如果需要实时数据 → **必须**调用工具获取，不能直接回答")
+	parts = append(parts, "3. 如果不需要实时数据且你能直接回答 → 直接给出答案")
+	parts = append(parts, "4. 每次调用一个工具，获取结果后再决定下一步（思考→行动→观察循环）")
+	parts = append(parts, "5. 最终回答要简洁准确，使用中文")
 	parts = append(parts, "")
-	parts = append(parts, "例如调用网络搜索：")
-	parts = append(parts, `{"tool": "web_search", "params": {"query": "当前北京时间"}}`)
+
+	// 工具调用方式
+	parts = append(parts, "# 工具调用方式")
+	parts = append(parts, "你支持原生 Function Calling 和文本 JSON 格式两种方式：")
+	parts = append(parts, "- **优先使用原生 Function Calling**（通过工具定义直接返回）")
+	parts = append(parts, "- 如果无法使用原生方式，输出 JSON 格式调用：")
+	parts = append(parts, `  {"tool": "工具名称", "params": {"参数名": "参数值"}}`)
 	parts = append(parts, "")
-	parts = append(parts, "当你可以直接回答时，直接给出答案（不要使用工具调用格式）。")
+	parts = append(parts, "示例（搜索实时信息）：")
+	parts = append(parts, `  {"tool": "web_search", "params": {"query": "当前北京时间"}}`)
+	parts = append(parts, "")
 
 	return strings.Join(parts, "\n")
 }
 
 // parseToolCallsFromText 从文本中解析工具调用
-// 当 LLM 不支持 function calling 时使用此方法
+// 当 LLM 不支持 function calling 或者返回文本格式工具调用时使用此方法
+// 支持的格式：
+//   - JSON: {"tool": "xxx", "params": {...}}
+//   - XML: <tool name="xxx"><param name="key">value</param></tool>
+//   - Markdown 代码块中的 JSON: ```json {"tool": "xxx", "params": {...}} ```
 func (e *AgentEngine) parseToolCallsFromText(content string) []llm.ToolCall {
-	// 尝试在文本中查找 JSON 工具调用格式
-	// 格式: {"tool": "xxx", "params": {...}}
-	
 	var calls []llm.ToolCall
-	
-	// 查找所有可能的 JSON 对象
+
+	// 尝试多种格式解析
+	calls = append(calls, e.parseJSONToolCalls(content)...)
+	if len(calls) > 0 {
+		return calls
+	}
+
+	calls = append(calls, e.parseJSONCodeBlockToolCalls(content)...)
+	if len(calls) > 0 {
+		return calls
+	}
+
+	return calls
+}
+
+// parseJSONToolCalls 解析纯文本中的 JSON 工具调用格式: {"tool": "xxx", "params": {...}}
+func (e *AgentEngine) parseJSONToolCalls(content string) []llm.ToolCall {
+	var calls []llm.ToolCall
+
+	// 搜索所有可能的 JSON 工具调用（支持单引号和双引号两种格式）
 	start := 0
 	for {
 		idx := strings.Index(content[start:], `{"tool"`)
 		if idx == -1 {
-			idx = strings.Index(content[start:], `{"tool"`)
+			idx = strings.Index(content[start:], `{'tool'`)
 			if idx == -1 {
 				break
 			}
 		}
-		
+
 		// 找到可能的 JSON 开始位置
 		jsonStart := start + idx
-		
+
 		// 尝试找到完整的 JSON 对象（到第一个 }）
 		depth := 0
 		jsonEnd := -1
 		for i := jsonStart; i < len(content); i++ {
-			if content[i] == '{' {
+			if content[i] == '{' || content[i] == '\'' {
 				depth++
-			} else if content[i] == '}' {
+			} else if content[i] == '}' || content[i] == '\'' {
 				depth--
 				if depth == 0 {
 					jsonEnd = i + 1
@@ -291,20 +354,22 @@ func (e *AgentEngine) parseToolCallsFromText(content string) []llm.ToolCall {
 				}
 			}
 		}
-		
+
 		if jsonEnd == -1 {
 			break
 		}
-		
+
 		jsonStr := content[jsonStart:jsonEnd]
-		
-		// 解析 JSON
+
+		// 解析 JSON（尝试替换单引号为双引号以兼容不同格式）
 		var toolCall struct {
-			Tool  string                 `json:"tool"`
+			Tool   string                 `json:"tool"`
 			Params map[string]interface{} `json:"params"`
 		}
-		
-		if err := json.Unmarshal([]byte(jsonStr), &toolCall); err == nil {
+
+		parsedStr := strings.ReplaceAll(jsonStr, "'", "\"")
+
+		if err := json.Unmarshal([]byte(parsedStr), &toolCall); err == nil {
 			if toolCall.Tool != "" {
 				// 检查工具是否存在
 				if _, exists := e.tools[toolCall.Tool]; exists {
@@ -319,10 +384,55 @@ func (e *AgentEngine) parseToolCallsFromText(content string) []llm.ToolCall {
 				}
 			}
 		}
-		
+
 		start = jsonEnd
 	}
-	
+
+	return calls
+}
+
+// parseJSONCodeBlockToolCalls 解析 Markdown 代码块中的 JSON 工具调用
+// 格式: ```json {"tool": "xxx", "params": {...}} ```
+func (e *AgentEngine) parseJSONCodeBlockToolCalls(content string) []llm.ToolCall {
+	var calls []llm.ToolCall
+
+	// 查找 ```json 代码块
+	marker := "```json"
+	for {
+		startIdx := strings.Index(content, marker)
+		if startIdx == -1 {
+			break
+		}
+		blockStart := startIdx + len(marker)
+
+		// 找到代码块结束
+		endIdx := strings.Index(content[blockStart:], "```")
+		if endIdx == -1 {
+			break
+		}
+		jsonStr := strings.TrimSpace(content[blockStart : blockStart+endIdx])
+
+		// 解析 JSON 数组或单个对象
+		var toolCall struct {
+			Tool   string                 `json:"tool"`
+			Params map[string]interface{} `json:"params"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &toolCall); err == nil && toolCall.Tool != "" {
+			if _, exists := e.tools[toolCall.Tool]; exists {
+				argsJSON, _ := json.Marshal(toolCall.Params)
+				calls = append(calls, llm.ToolCall{
+					ID: fmt.Sprintf("call_%d", len(calls)),
+					Function: &llm.FunctionCall{
+						Name:      toolCall.Tool,
+						Arguments: string(argsJSON),
+					},
+				})
+			}
+		}
+
+		content = content[blockStart+endIdx+3:]
+	}
+
 	return calls
 }
 
@@ -466,4 +576,53 @@ const (
 type StreamEvent struct {
 	Type string                 `json:"type"`    // 事件类型
 	Data map[string]interface{} `json:"data"`    // 事件数据
+}
+
+// ==================== 辅助函数 ====================
+
+// truncateForLog 截断字符串用于日志输出（防止日志过长）
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// isRealtimeQuery 判断用户消息是否涉及实时数据需求
+// 通过关键词匹配触发实时数据相关的工具调用
+func isRealtimeQuery(message string) bool {
+	msg := strings.ToLower(message)
+
+	// 实时数据关键词分组
+	timeKeywords := []string{
+		"时间", "日期", "星期", "几号", "现在", "今天", "昨天", "明天",
+		"当前", "目前", "最新", "实时", "此刻", "此时此刻",
+		"time", "date", "today", "now", "current",
+	}
+	weatherKeywords := []string{
+		"天气", "温度", "气温", "下雨", "下雪", "刮风", "雾霾", "晴朗",
+		"weather", "temperature", "forecast",
+	}
+	newsKeywords := []string{
+		"新闻", "资讯", "热点", "时事", "报道", "快讯",
+		"news", "headline", "breaking",
+	}
+	priceKeywords := []string{
+		"股价", "股票", "汇率", "价格", "行情", "比特币", "基金",
+		"stock", "price", "rate", "market",
+	}
+
+	// 组合所有关键词
+	allKeywords := append([]string{}, timeKeywords...)
+	allKeywords = append(allKeywords, weatherKeywords...)
+	allKeywords = append(allKeywords, newsKeywords...)
+	allKeywords = append(allKeywords, priceKeywords...)
+
+	for _, kw := range allKeywords {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+
+	return false
 }
