@@ -284,7 +284,11 @@ func (c *StdioMCPClient) readResponseLocked() (json.RawMessage, error) {
 
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			break // 空行 = Header 结束
+			if contentLength > 0 {
+				break // 已见过 Content-Length 头，空行 = Header 结束
+			}
+			// 还没见过 Content-Length，空行来自 MCP 的日志输出，跳过
+			continue
 		}
 
 		if strings.HasPrefix(line, "Content-Length:") {
@@ -296,7 +300,7 @@ func (c *StdioMCPClient) readResponseLocked() (json.RawMessage, error) {
 	}
 
 	if contentLength <= 0 {
-		return nil, fmt.Errorf("无效的 Content-Length: %d", contentLength)
+		return nil, fmt.Errorf("无效的 Content-Length: %d (可能是MCP日志干扰)", contentLength)
 	}
 
 	body := make([]byte, contentLength)
