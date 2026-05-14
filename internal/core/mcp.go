@@ -49,12 +49,13 @@ func (c *StdioMCPClient) ListTools() []MCPToolInfo { return c.tools }
 // Playwright MCP 的 HTTP 模式：npx @playwright/mcp@latest --port 8931
 // 客户端通过 POST http://localhost:8931/mcp 发送 JSON-RPC 请求
 type HTTPMCPClient struct {
-	name    string
-	url     string
-	client  *http.Client
-	mu      sync.Mutex
-	nextID  int
-	tools   []MCPToolInfo
+	name      string
+	url       string
+	client    *http.Client
+	mu        sync.Mutex
+	nextID    int
+	tools     []MCPToolInfo
+	sessionID string // MCP Streamable HTTP 会话 ID
 }
 
 func NewHTTPMCPClient(name, url string) *HTTPMCPClient {
@@ -169,6 +170,8 @@ func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error
 		req.ID = c.nextID
 		c.nextID++
 	}
+	// 带上已持有的 session ID
+	currentSession := c.sessionID
 	c.mu.Unlock()
 
 	reqData, err := json.Marshal(req)
@@ -182,12 +185,24 @@ func (c *HTTPMCPClient) doRequest(req mcpJSONRPCRequest) (json.RawMessage, error
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+	if currentSession != "" {
+		httpReq.Header.Set("Mcp-Session-Id", currentSession)
+	}
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP 请求失败: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// 提取 session ID（服务器在首次初始化时返回）
+	if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
+		c.mu.Lock()
+		if c.sessionID == "" {
+			c.sessionID = sessionID
+		}
+		c.mu.Unlock()
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
