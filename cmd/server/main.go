@@ -192,16 +192,26 @@ func registerMCPTools(engine *core.AgentEngine, mcpCfg *config.MCPConfig) int {
 		if port > 0 {
 			// HTTP 模式：启动子进程 + HTTP 客户端
 			startMCPProcess(srv.Command, srv.Args, srv.Env)
-			time.Sleep(2 * time.Second) // 等待服务启动
 
 			client := core.NewHTTPMCPClient(srv.Name, fmt.Sprintf("http://localhost:%d", port))
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if err := client.Initialize(ctx); err != nil {
-				fmt.Printf("⚠️  MCP HTTP %s 连接失败: %v\n", srv.Name, err)
+			// 重试连接（服务器启动可能需要几秒）
+			var lastErr error
+			for retry := 0; retry < 5; retry++ {
+				time.Sleep(2 * time.Second) // 每次等 2 秒
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := client.Initialize(ctx)
 				cancel()
+				if err == nil {
+					lastErr = nil
+					break
+				}
+				lastErr = err
+				fmt.Printf("  ⏳ MCP %s 连接中... (第%d次, %v)\n", srv.Name, retry+1, err)
+			}
+			if lastErr != nil {
+				fmt.Printf("⚠️  MCP HTTP %s 连接失败: %v\n", srv.Name, lastErr)
 				continue
 			}
-			cancel()
 
 			for _, toolInfo := range client.ListTools() {
 				wrappedTool := core.AsHTTPMCPTool(client, toolInfo)
