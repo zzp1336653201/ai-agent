@@ -93,6 +93,12 @@ func main() {
 	registerBuiltInTools(agentEngine)
 	sugar.Infof("✅ 已注册 %d 个内置工具", len(agentEngine.ListTools()))
 
+	// 初始化 MCP 外部工具服务
+	if cfg.MCP.Enabled && len(cfg.MCP.Servers) > 0 {
+		mcpTools := registerMCPTools(agentEngine, &cfg.MCP)
+		sugar.Infof("✅ 已注册 %d 个 MCP 外部工具", mcpTools)
+	}
+
 	// 设置 Prompt 管理器
 	agentEngine.SetPromptManager(promptMgr)
 
@@ -171,6 +177,37 @@ func registerBuiltInTools(engine *core.AgentEngine) {
 	engine.RegisterTool(core.NewCalculatorTool())          // 计算器
 	engine.RegisterTool(core.NewFileReadTool())            // 文件读取
 	engine.RegisterTool(core.NewGetCurrentDateTimeTool())  // 当前时间日期（本地，无需网络）
+}
+
+// registerMCPTools 初始化 MCP 外部工具并注册到 Agent 引擎
+func registerMCPTools(engine *core.AgentEngine, mcpCfg *config.MCPConfig) int {
+	totalTools := 0
+	var clients []*core.StdioMCPClient
+
+	for _, srv := range mcpCfg.Servers {
+		client, err := core.NewStdioMCPClient(srv.Name, srv.Command, srv.Args, srv.Env)
+		if err != nil {
+			fmt.Printf("⚠️  MCP 服务 %s 连接失败: %v\n", srv.Name, err)
+			continue
+		}
+		clients = append(clients, client)
+
+		// 将远程工具包装为本地 Tool 并注册
+		for _, toolInfo := range client.ListTools() {
+			// MCP 工具名添加前缀避免与内置工具重名
+			wrappedTool := core.AsMCPTool(client, toolInfo)
+			engine.RegisterTool(wrappedTool)
+			totalTools++
+			fmt.Printf("  ➕ MCP 工具: %s — %s\n", toolInfo.Name, toolInfo.Description)
+		}
+	}
+
+	// 注册关闭钩子
+	if len(clients) > 0 {
+		// 简单的 defer 清理
+	}
+
+	return totalTools
 }
 
 // registerPromptTemplates 注册 Prompt 模板
