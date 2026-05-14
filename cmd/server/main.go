@@ -165,11 +165,12 @@ func main() {
 
 // registerBuiltInTools 注册内置工具集
 func registerBuiltInTools(engine *core.AgentEngine) {
-	engine.RegisterTool(core.NewWebSearchTool())       // 网络搜索
-	engine.RegisterTool(core.NewRAGSearchTool(engine))  // RAG 知识库检索
-	engine.RegisterTool(core.NewHTTPRequestTool())     // HTTP API 调用
-	engine.RegisterTool(core.NewCalculatorTool())       // 计算器
-	engine.RegisterTool(core.NewFileReadTool())         // 文件读取
+	engine.RegisterTool(core.NewWebSearchTool())           // 网络搜索
+	engine.RegisterTool(core.NewRAGSearchTool(engine))     // RAG 知识库检索
+	engine.RegisterTool(core.NewHTTPRequestTool())         // HTTP API 调用
+	engine.RegisterTool(core.NewCalculatorTool())          // 计算器
+	engine.RegisterTool(core.NewFileReadTool())            // 文件读取
+	engine.RegisterTool(core.NewGetCurrentDateTimeTool())  // 当前时间日期（本地，无需网络）
 }
 
 // registerPromptTemplates 注册 Prompt 模板

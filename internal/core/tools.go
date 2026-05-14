@@ -46,46 +46,187 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 
 func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	query, _ := params["query"].(string)
-	_ = 5 // 默认搜索数量
+	count := 5
 	if c, ok := params["count"].(float64); ok {
-		_ = int(c)
+		count = int(c)
 	}
 
-	// 调用 DuckDuckGo Instant Answer API（免费无需 API Key）
+	// 尝试多个搜索后端，一个失败则自动切换
+	backends := []string{"duckduckgo", "bing_html"}
+
+	var lastErr error
+	for _, backend := range backends {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		content, err := t.searchBackend(ctx, backend, query, count)
+		if err == nil {
+			return NewToolResult(content), nil
+		}
+		lastErr = err
+		fmt.Printf("[WebSearch] 后端 %s 搜索失败: %v，尝试下一个...\n", backend, err)
+	}
+
+	return NewToolResult(fmt.Sprintf("搜索失败: %v。请尝试使用其他工具，如 get_current_datetime（查时间）或 http_request（直接调用API）", lastErr)), nil
+}
+
+// searchBackend 在指定后端执行搜索
+func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query string, count int) (string, error) {
+	switch backend {
+	case "duckduckgo":
+		return t.searchDuckDuckGo(ctx, query)
+	case "bing_html":
+		return t.searchBingHTML(ctx, query, count)
+	default:
+		return "", fmt.Errorf("未知搜索后端: %s", backend)
+	}
+}
+
+// searchDuckDuckGo 调用 DuckDuckGo Instant Answer API
+func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (string, error) {
 	searchURL := fmt.Sprintf(
-		"https://api.duckduckgo.com/?q=%s&format=json&no_html=1",
+		"https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1",
 		url.QueryEscape(query),
 	)
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SirenAgent/1.0)")
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	var result struct {
-		Abstract     string `json:"Abstract"`
-		AbstractText string `json:"AbstractText"`
-		Heading      string `json:"Heading"`
+		Abstract     string   `json:"Abstract"`
+		AbstractText string   `json:"AbstractText"`
+		Heading      string   `json:"Heading"`
+		RelatedTopics []struct {
+			Text    string `json:"Text"`
+			FirstURL string `json:"FirstURL"`
+		} `json:"RelatedTopics"`
+		Answer        string `json:"Answer"`
+		AnswerType    string `json:"AnswerType"`
 	}
 	json.Unmarshal(body, &result)
+
+	// 优先使用即时答案（适合时间、计算等精确查询）
+	if result.Answer != "" {
+		return fmt.Sprintf("[%s]\n%s", result.Heading, result.Answer), nil
+	}
 
 	content := result.AbstractText
 	if content == "" {
 		content = result.Abstract
 	}
 	if content == "" {
-		content = fmt.Sprintf("未找到关于「%s」的搜索结果", query)
-	} else if result.Heading != "" {
+		return "", fmt.Errorf("没有找到结果")
+	}
+	if result.Heading != "" {
 		content = fmt.Sprintf("[%s]\n%s", result.Heading, content)
 	}
+	return content, nil
+}
 
-	return NewToolResult(content), nil
+// searchBingHTML 通过 Bing 搜索（无需 API Key，解析 HTML）
+func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf(
+		"https://www.bing.com/search?q=%s&count=%d",
+		url.QueryEscape(query), count,
+	)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	// 简单解析：提取 <h2><a href="...">标题</a></h2> 结构 (Bing)
+	var results []string
+	lines := strings.Split(html, "\n")
+	inH2 := false
+	for _, line := range lines {
+		if strings.Contains(line, "<h2>") || strings.Contains(line, "<h2 ") {
+			inH2 = true
+		}
+		if inH2 {
+			// 提取 <a> 标签
+			aStart := strings.Index(line, "<a ")
+			if aStart != -1 {
+				// 提取 href
+				hrefStart := strings.Index(line[aStart:], "href=\"")
+				if hrefStart != -1 {
+					hrefStart += aStart + 6
+					hrefEnd := strings.Index(line[hrefStart:], "\"")
+					if hrefEnd != -1 {
+						urlStr := line[hrefStart : hrefStart+hrefEnd]
+						// 提取标题文字
+						textStart := strings.Index(line, ">")
+						textEnd := strings.LastIndex(line, "</a>")
+						if textStart != -1 && textEnd != -1 && textEnd > textStart {
+							title := strings.TrimSpace(line[textStart+1 : textEnd])
+							title = stripHTMLTags(title)
+							if title != "" {
+								results = append(results, fmt.Sprintf("- [%s](%s)", title, urlStr))
+							}
+						}
+					}
+				}
+				inH2 = false
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("Bing 未返回可解析的结果")
+	}
+
+	content := fmt.Sprintf("关于「%s」的搜索结果：\n", query)
+	content += strings.Join(results, "\n")
+	return content, nil
+}
+
+// stripHTMLTags 简单去除 HTML 标签
+func stripHTMLTags(s string) string {
+	var result strings.Builder
+	inTag := false
+	for _, c := range s {
+		if c == '<' {
+			inTag = true
+			continue
+		}
+		if c == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			result.WriteRune(c)
+		}
+	}
+	// 清理 &nbsp; 等
+	cleaned := strings.ReplaceAll(result.String(), "&nbsp;", " ")
+	cleaned = strings.ReplaceAll(cleaned, "&amp;", "&")
+	cleaned = strings.ReplaceAll(cleaned, "&lt;", "<")
+	cleaned = strings.ReplaceAll(cleaned, "&gt;", ">")
+	return strings.TrimSpace(cleaned)
 }
 
 // ==================== RAG 知识库检索工具 ====================
@@ -368,6 +509,72 @@ func (t *FileReadTool) Execute(ctx context.Context, params map[string]interface{
 	return &ToolResult{
 		Content: "文件读取功能待实现，请接入 os 包实现",
 	}, nil
+}
+
+// ==================== 时间日期工具（本地无API依赖） ====================
+
+// GetCurrentDateTimeTool 获取当前时间日期 — 无需外部 API
+type GetCurrentDateTimeTool struct{}
+
+func NewGetCurrentDateTimeTool() *GetCurrentDateTimeTool { return &GetCurrentDateTimeTool{} }
+
+func (t *GetCurrentDateTimeTool) Name() string { return "get_current_datetime" }
+func (t *GetCurrentDateTimeTool) Description() string {
+	return "获取当前的日期和时间，支持北京时间（UTC+8）和UTC时间。当用户询问当前时间、日期、星期几、几号时使用此工具。无需网络，立即返回。"
+}
+func (t *GetCurrentDateTimeTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"timezone": map[string]interface{}{
+				"type":        "string",
+				"description": "时区，默认 Asia/Shanghai（北京时间）。可选值：UTC, Asia/Shanghai, America/New_York",
+			},
+			"format": map[string]interface{}{
+				"type":        "string",
+				"description": "输出格式，默认 full（完整）。可选值：full（完整日期时间）, date（仅日期）, time（仅时间）, weekday（仅星期几）",
+			},
+		},
+	}
+}
+
+func (t *GetCurrentDateTimeTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	timezone := "Asia/Shanghai"
+	if tz, ok := params["timezone"].(string); ok && tz != "" {
+		timezone = tz
+	}
+
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		// 回退到 UTC
+		loc = time.UTC
+	}
+
+	now := time.Now().In(loc)
+	weekdayCN := [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+	weekdayEN := [...]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+
+	format, _ := params["format"].(string)
+	content := ""
+
+	switch format {
+	case "date":
+		content = now.Format("2006年01月02日")
+	case "time":
+		content = now.Format("15:04:05")
+	case "weekday":
+		content = fmt.Sprintf("%s（%s）", weekdayCN[now.Weekday()], weekdayEN[now.Weekday()])
+	default:
+		content = fmt.Sprintf(
+			"当前时间（%s）：%s %s %s",
+			timezone,
+			now.Format("2006年01月02日"),
+			weekdayCN[now.Weekday()],
+			now.Format("15:04:05"),
+		)
+	}
+
+	return NewToolResult(content), nil
 }
 
 // SocialMediaService 社交媒体服务接口
