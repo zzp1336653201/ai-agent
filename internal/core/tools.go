@@ -26,18 +26,25 @@ func NewWebSearchTool() *WebSearchTool {
 }
 
 func (t *WebSearchTool) Name() string { return "web_search" }
-func (t *WebSearchTool) Description() string { return "在互联网上搜索信息，获取实时数据、新闻、知识等。当用户的问题需要最新信息或你不确定答案时使用此工具。" }
+func (t *WebSearchTool) Description() string {
+	return "在互联网上搜索实时信息。当你需要最新新闻、实时数据、不确定的知识点时使用。不适合查询当前时间（请用get_current_datetime）。"
+}
 func (t *WebSearchTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "搜索关键词",
+				"description": "搜索关键词，越具体越精确，建议2-10个中文词",
+				"minLength":   1,
+				"maxLength":   200,
 			},
 			"count": map[string]interface{}{
 				"type":        "integer",
-				"description": "返回结果数量，默认5",
+				"description": "返回结果数量（1-20条），默认5条",
+				"minimum":     1,
+				"maximum":     20,
+				"default":     5,
 			},
 		},
 		"required": []string{"query"},
@@ -46,9 +53,20 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 
 func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	query, _ := params["query"].(string)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return NewToolResult("搜索失败：query参数不能为空，请输入有效的搜索关键词"), nil
+	}
+
 	count := 5
 	if c, ok := params["count"].(float64); ok {
 		count = int(c)
+	}
+	if count < 1 {
+		count = 1
+	}
+	if count > 20 {
+		count = 20
 	}
 
 	// 尝试多个搜索后端，一个失败则自动切换
@@ -242,7 +260,7 @@ func NewRAGSearchTool(engine *AgentEngine) *RAGSearchTool {
 
 func (t *RAGSearchTool) Name() string        { return "rag_search" }
 func (t *RAGSearchTool) Description() string {
-	return "在企业/项目知识库中检索相关文档片段。当用户询问产品信息、技术文档、FAQ等问题时使用。"
+	return "在专属知识库中检索相关文档片段。当用户询问产品信息、技术文档、FAQ、内部资料时使用。不适合搜索互联网实时信息（请用web_search）。"
 }
 func (t *RAGSearchTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -250,15 +268,20 @@ func (t *RAGSearchTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "检索问题或关键词",
+				"description": "检索关键词或问题，建议从用户的问题中提取最核心的3-8个关键词",
+				"minLength":   1,
+				"maxLength":   200,
 			},
 			"top_k": map[string]interface{}{
 				"type":        "integer",
-				"description": "返回最相关的文档数量，默认3",
+				"description": "返回最相关的文档块数量（1-10条），默认3条。技术问答可设大一些",
+				"minimum":     1,
+				"maximum":     10,
+				"default":     3,
 			},
 			"collection": map[string]interface{}{
 				"type":        "string",
-				"description": "向量集合名称（可选），不传则自动使用当前Agent的知识库",
+				"description": "向量集合名称（可选）。不传则自动使用当前Agent的知识库，一般不需要传此参数",
 			},
 		},
 		"required": []string{"query"},
@@ -267,9 +290,20 @@ func (t *RAGSearchTool) Parameters() map[string]interface{} {
 
 func (t *RAGSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	query, _ := params["query"].(string)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return NewToolResult("检索失败：query参数不能为空，请输入要查询的关键词"), nil
+	}
+
 	topK := 3
 	if k, ok := params["top_k"].(float64); ok {
 		topK = int(k)
+	}
+	if topK < 1 {
+		topK = 1
+	}
+	if topK > 10 {
+		topK = 10
 	}
 
 	// 确定集合名称 — 优先级：参数 > Context > 全局默认
@@ -320,7 +354,7 @@ func NewSocialPublishTool(svc SocialMediaService) *SocialPublishTool {
 
 func (t *SocialPublishTool) Name() string        { return "social_publish" }
 func (t *SocialPublishTool) Description() string {
-	return "将生成的内容发布到社交媒体平台（抖音/小红书/视频号）。参数包括平台类型、标题、内容和标签。"
+	return "⚠️ 高风险操作：将内容发布到社交媒体平台（抖音/小红书/视频号）。仅在用户明确要求发布时使用，且必须先获得用户确认。"
 }
 func (t *SocialPublishTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -328,20 +362,25 @@ func (t *SocialPublishTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"platform": map[string]interface{}{
 				"type":        "string",
-				"description": "目标平台: douyin | xiaohongshu | video_channel",
+				"description": "目标平台，可选值：douyin（抖音）, xiaohongshu（小红书）, video_channel（微信视频号）",
+				"enum":        []string{"douyin", "xiaohongshu", "video_channel"},
 			},
 			"title": map[string]interface{}{
 				"type":        "string",
-				"description": "帖子标题（可选）",
+				"description": "帖子标题（可选），最长100字",
+				"maxLength":   100,
 			},
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "帖子正文内容",
+				"description": "帖子正文内容，最少10个字，最长2000字",
+				"minLength":   10,
+				"maxLength":   2000,
 			},
 			"tags": map[string]interface{}{
-				"type":  "array",
-				"items": map[string]interface{}{"type": "string"},
-				"description": "话题标签列表",
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "话题标签列表，每个标签不加#号，建议2-5个标签",
+				"maxItems":    10,
 			},
 		},
 		"required": []string{"platform", "content"},
@@ -353,13 +392,39 @@ func (t *SocialPublishTool) Execute(ctx context.Context, params map[string]inter
 	content, _ := params["content"].(string)
 	title, _ := params["title"].(string)
 
+	// Poka-yoke: 平台名自动转小写去空格
+	platform = strings.TrimSpace(strings.ToLower(platform))
+	validPlatforms := map[string]bool{"douyin": true, "xiaohongshu": true, "video_channel": true}
+	if !validPlatforms[platform] {
+		return NewToolResult(fmt.Sprintf(
+			"发布失败：无效的平台「%s」\n有效平台: douyin（抖音）, xiaohongshu（小红书）, video_channel（微信视频号）",
+			platform,
+		)), nil
+	}
+
+	content = strings.TrimSpace(content)
+	if len([]rune(content)) < 10 {
+		return NewToolResult(fmt.Sprintf("发布失败：内容过短（%d字），最少需要10个字", len([]rune(content)))), nil
+	}
+	if len([]rune(content)) > 2000 {
+		return NewToolResult(fmt.Sprintf("发布失败：内容过长（%d字），最多2000字", len([]rune(content)))), nil
+	}
+
 	tags := make([]string, 0)
 	if rawTags, ok := params["tags"].([]interface{}); ok {
 		for _, tag := range rawTags {
 			if s, ok := tag.(string); ok {
-				tags = append(tags, s)
+				s = strings.TrimSpace(s)
+				// Poka-yoke: 自动去掉用户可能误输入的 # 号
+				s = strings.TrimPrefix(s, "#")
+				if s != "" {
+					tags = append(tags, s)
+				}
 			}
 		}
+	}
+	if len(tags) > 10 {
+		tags = tags[:10]
 	}
 
 	req := &PublishRequest{
@@ -392,7 +457,7 @@ func NewHTTPRequestTool() *HTTPRequestTool {
 
 func (t *HTTPRequestTool) Name() string        { return "http_request" }
 func (t *HTTPRequestTool) Description() string {
-	return "发送 HTTP 请求到指定 URL。用于调用外部 RESTful API 或获取网页数据。支持 GET/POST 方法。"
+	return "发送 HTTP 请求调用外部 RESTful API 或获取网页数据。支持 GET/POST/PUT/DELETE。注意：不要用于内部敏感接口。"
 }
 func (t *HTTPRequestTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -400,19 +465,22 @@ func (t *HTTPRequestTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"url": map[string]interface{}{
 				"type":        "string",
-				"description": "请求 URL",
+				"description": "请求 URL，必须以 http:// 或 https:// 开头",
+				"pattern":     "^https?://",
 			},
 			"method": map[string]interface{}{
 				"type":        "string",
-				"description": "HTTP 方法: GET | POST | PUT | DELETE",
+				"description": "HTTP 方法，默认 GET。查询用GET，创建用POST，更新用PUT，删除用DELETE",
+				"enum":        []string{"GET", "POST", "PUT", "DELETE"},
+				"default":     "GET",
 			},
 			"headers": map[string]interface{}{
 				"type":        "object",
-				"description": "请求头键值对",
+				"description": "请求头键值对，如 {\"Authorization\": \"Bearer xxx\", \"Content-Type\": \"application/json\"}",
 			},
 			"body": map[string]interface{}{
 				"type":        "string",
-				"description": "请求体（POST 时使用）",
+				"description": "请求体（仅POST/PUT时使用）。JSON格式请确保是合法的JSON字符串",
 			},
 		},
 		"required": []string{"url"},
@@ -421,11 +489,22 @@ func (t *HTTPRequestTool) Parameters() map[string]interface{} {
 
 func (t *HTTPRequestTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	rawURL, _ := params["url"].(string)
+	rawURL = strings.TrimSpace(rawURL)
+
+	// Poka-yoke: URL 校验
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return NewToolResult(fmt.Sprintf("请求失败：URL「%s」需要以 http:// 或 https:// 开头，请检查URL", rawURL)), nil
+	}
+
 	method, _ := params["method"].(string)
 	if method == "" {
 		method = "GET"
 	}
 	method = strings.ToUpper(method)
+	validMethods := map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true}
+	if !validMethods[method] {
+		method = "GET"
+	}
 
 	headers := make(map[string]string)
 	if h, ok := params["headers"].(map[string]interface{}); ok {
@@ -506,7 +585,7 @@ type FileReadTool struct{}
 func NewFileReadTool() *FileReadTool { return &FileReadTool{} }
 func (t *FileReadTool) Name() string   { return "file_read" }
 func (t *FileReadTool) Description() string {
-	return "读取本地文件的内容。用于处理配置文件、日志文件等。"
+	return "读取指定文本文件的内容。可用于读取配置文件、日志文件、代码文件等。注意：只能读取文本文件，不能读取二进制文件。"
 }
 func (t *FileReadTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -514,11 +593,13 @@ func (t *FileReadTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"path": map[string]interface{}{
 				"type":        "string",
-				"description": "文件路径",
+				"description": "文件路径，使用相对于项目的路径（如 config.yaml）或绝对路径。不要使用 ~ 开头的路径",
 			},
 			"encoding": map[string]interface{}{
 				"type":        "string",
-				"description": "文件编码，默认 utf-8",
+				"description": "文件编码，默认 utf-8。可选：utf-8, gbk, latin1",
+				"enum":        []string{"utf-8", "gbk", "latin1"},
+				"default":     "utf-8",
 			},
 		},
 		"required": []string{"path"},
@@ -540,7 +621,7 @@ func NewGetCurrentDateTimeTool() *GetCurrentDateTimeTool { return &GetCurrentDat
 
 func (t *GetCurrentDateTimeTool) Name() string { return "get_current_datetime" }
 func (t *GetCurrentDateTimeTool) Description() string {
-	return "获取当前的日期和时间，支持北京时间（UTC+8）和UTC时间。当用户询问当前时间、日期、星期几、几号时使用此工具。无需网络，立即返回。"
+	return "获取当前日期和时间。当用户询问「现在几点」「今天几号」「星期几」时使用。无需网络，即时返回。不能用于查询历史日期或未来日期。"
 }
 func (t *GetCurrentDateTimeTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -548,11 +629,15 @@ func (t *GetCurrentDateTimeTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"timezone": map[string]interface{}{
 				"type":        "string",
-				"description": "时区，默认 Asia/Shanghai（北京时间）。可选值：UTC, Asia/Shanghai, America/New_York",
+				"description": "时区，默认 Asia/Shanghai（北京时间）。可选值：Asia/Shanghai, UTC, America/New_York",
+				"enum":        []string{"Asia/Shanghai", "UTC", "America/New_York"},
+				"default":     "Asia/Shanghai",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
-				"description": "输出格式，默认 full（完整）。可选值：full（完整日期时间）, date（仅日期）, time（仅时间）, weekday（仅星期几）",
+				"description": "输出格式，默认 full。可选值：full（完整日期+时间）, date（仅日期）, time（仅时间）, weekday（仅星期几）",
+				"enum":        []string{"full", "date", "time", "weekday"},
+				"default":     "full",
 			},
 		},
 	}
