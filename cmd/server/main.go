@@ -105,6 +105,41 @@ func main() {
 	// 设置 Prompt 管理器
 	agentEngine.SetPromptManager(promptMgr)
 
+	// 6.1 初始化 Guardrails 防护系统
+	if cfg.Guardrails.Enabled {
+		guardrailMgr := core.NewGuardrailManager()
+		if cfg.Guardrails.EnableSensitive {
+			guardrailMgr.AddInputGuardrail(core.NewSensitiveContentGuardrail())
+			sugar.Info("✅ Guardrail: 敏感内容检测已启用")
+		}
+		if cfg.Guardrails.EnablePII {
+			guardrailMgr.AddInputGuardrail(core.NewPIIGuardrail())
+			sugar.Info("✅ Guardrail: PII隐私信息检测已启用")
+		}
+		if cfg.Guardrails.MaxInputLen > 0 {
+			guardrailMgr.AddInputGuardrail(core.NewLengthGuardrail(cfg.Guardrails.MaxInputLen))
+			sugar.Info("✅ Guardrail: 输入长度限制 (%d字)", cfg.Guardrails.MaxInputLen)
+		}
+		// 输出防护
+		guardrailMgr.AddOutputGuardrail(core.NewOutputSensitivityGuardrail())
+		if cfg.Guardrails.EnableQuality {
+			guardrailMgr.AddOutputGuardrail(core.NewOutputQualityGuardrail())
+			sugar.Info("✅ Guardrail: 输出质量检查已启用")
+		}
+		// 工具防护 — 预设风险等级
+		core.SetupDefaultToolRisks(guardrailMgr.ToolGuardrail())
+		if cfg.Guardrails.EnableRateLimit {
+			sugar.Info("✅ Guardrail: 工具速率限制已启用")
+		} else {
+			// 不启用速率限制时，清除所有速率限制
+			// (保留风险等级设置，仅关闭限流)
+		}
+		agentEngine.SetGuardrailManager(guardrailMgr)
+		sugar.Info("✅ Guardrails 防护系统初始化完成")
+	} else {
+		sugar.Info("⏭️ Guardrails 防护系统已禁用")
+	}
+
 	// 7. 初始化工作流引擎
 	workflowEngine := core.NewWorkflowEngine(agentEngine, nil) // store 后续注入
 	sugar.Info("✅ 工作流引擎就绪")

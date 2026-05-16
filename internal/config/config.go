@@ -4,14 +4,15 @@ import "github.com/spf13/viper"
 
 // Config 全局配置结构
 type Config struct {
-	Server        ServerConfig       `mapstructure:"server"`
-	LLM           LLMConfig          `mapstructure:"llm"`
-	VectorDB      VectorDBConfig     `mapstructure:"vector_db"`
-	Database      DatabaseConfig     `mapstructure:"database"`
-	Redis         RedisConfig        `mapstructure:"redis"`
-	Agent         AgentConfig        `mapstructure:"agent"`
+	Server          ServerConfig          `mapstructure:"server"`
+	LLM             LLMConfig             `mapstructure:"llm"`
+	VectorDB        VectorDBConfig        `mapstructure:"vector_db"`
+	Database        DatabaseConfig        `mapstructure:"database"`
+	Redis           RedisConfig           `mapstructure:"redis"`
+	Agent           AgentConfig           `mapstructure:"agent"`
+	Guardrails      GuardrailsConfig      `mapstructure:"guardrails"`
 	SocialPlatforms SocialPlatformsConfig `mapstructure:"social_platforms"`
-	MCP           MCPConfig          `mapstructure:"mcp"`
+	MCP             MCPConfig             `mapstructure:"mcp"`
 }
 
 type ServerConfig struct {
@@ -53,6 +54,15 @@ type AgentConfig struct {
 	MaxIterations int `mapstructure:"max_iterations"`
 	MemoryTTL     int `mapstructure:"memory_ttl"`
 	ToolsTimeout  int `mapstructure:"tools_timeout"`
+}
+
+type GuardrailsConfig struct {
+	Enabled      bool `mapstructure:"enabled"`
+	MaxInputLen  int  `mapstructure:"max_input_len"`  // 最大输入长度
+	EnablePII    bool `mapstructure:"enable_pii"`     // 是否启用PII检测
+	EnableSensitive bool `mapstructure:"enable_sensitive"` // 是否启用敏感内容检测
+	EnableRateLimit bool `mapstructure:"enable_rate_limit"` // 是否启用速率限制
+	EnableQuality  bool `mapstructure:"enable_quality"`    // 是否启用输出质量检查
 }
 
 type SocialPlatformsConfig struct {
@@ -120,4 +130,10 @@ func setDefaults() {
 	viper.SetDefault("agent.max_iterations", 10)
 	viper.SetDefault("agent.memory_ttl", 3600)
 	viper.SetDefault("agent.tools_timeout", 30)
+	viper.SetDefault("guardrails.enabled", true)
+	viper.SetDefault("guardrails.max_input_len", 10000)
+	viper.SetDefault("guardrails.enable_pii", true)
+	viper.SetDefault("guardrails.enable_sensitive", true)
+	viper.SetDefault("guardrails.enable_rate_limit", true)
+	viper.SetDefault("guardrails.enable_quality", false)
 }

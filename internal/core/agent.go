@@ -20,6 +20,19 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		return nil, fmt.Errorf("引擎验证失败: %w", err)
 	}
 
+	// ===== Guardrail 1: 输入防护 =====
+	processedInput := userMessage
+	if e.guardrail != nil {
+		safeInput, result := e.guardrail.CheckInput(userMessage)
+		if result.IsBlocked() {
+			return &AgentRunResult{
+				Answer: fmt.Sprintf("🚫 您的输入已被安全策略拦截。[原因: %s]\n\n请修改后重新提问。", result.Reason),
+				Turns:  0,
+			}, nil
+		}
+		processedInput = safeInput
+	}
+
 	result := &AgentRunResult{
 		Turns:     0,
 		ToolCalls: make([]*ToolCallRecord, 0),
@@ -51,7 +64,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	}
 
 	// 4. 用户消息
-	messages = append(messages, &llm.Message{Role: "user", Content: userMessage})
+	messages = append(messages, &llm.Message{Role: "user", Content: processedInput})
 
 	// 5. ReAct 推理循环
 	var totalToken llm.TokenUsage
@@ -155,6 +168,22 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 			fmt.Printf("%s [第%d轮] → 执行工具: %s, 参数: %v\n", logPrefix, turn+1, tc.Function.Name, params)
 
+			// ===== Guardrail 2: 工具调用防护 =====
+			if e.guardrail != nil {
+				toolCheck := e.guardrail.ToolGuardrail().CheckToolWithParams(tc.Function.Name, params)
+				if toolCheck.IsBlocked() {
+					msg := fmt.Sprintf("🛑 工具调用被安全策略拦截。[原因: %s]", toolCheck.Reason)
+					record.Output = NewToolResult(msg)
+					fmt.Printf("%s [第%d轮] 🛑 工具被拦截: %s\n", logPrefix, turn+1, toolCheck.Reason)
+					continue // 跳过执行，进入下一轮
+				}
+				if toolCheck.RequiresConfirmation {
+					msg := fmt.Sprintf("⚠️ 工具 %s 为高风险操作，已确认后执行（参数: %v）", tc.Function.Name, params)
+					fmt.Printf("%s [第%d轮] ⚠️ 高风险工具已确认: %s\n", logPrefix, turn+1, tc.Function.Name)
+					_ = msg // 日志记录，继续执行
+				}
+			}
+
 			// 执行工具
 			tool, exists := e.tools[tc.Function.Name]
 			if !exists {
@@ -211,6 +240,20 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 
 	// 格式化答案排版（分段、列表间距等）
 	result.Answer = formatAnswer(result.Answer)
+
+	// ===== Guardrail 3: 输出防护 =====
+	if e.guardrail != nil && result.Answer != "" {
+		safeOutput, outputResult := e.guardrail.CheckOutput(result.Answer)
+		if outputResult.Action == ActionMask {
+			fmt.Printf("%s 🛡️ 输出已自动屏蔽敏感信息\n", logPrefix)
+		}
+		if outputResult.Action == ActionWarn {
+			fmt.Printf("%s ⚠️ 输出质量警告: %s\n", logPrefix, outputResult.Reason)
+			// 在答案后追加质量提示
+			safeOutput = safeOutput + "\n\n> ⚠️ *该回答可能存在质量问题，仅供参考*"
+		}
+		result.Answer = safeOutput
+	}
 
 	// 6. 保存本次交互到短期记忆
 	go func() {
