@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"sirenagent/internal/model"
 	"sirenagent/internal/service"
@@ -27,7 +28,7 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 
 	// 文件上传模式（multipart/form-data）
-	if len(contentType) >= 24 && contentType[:24] == "multipart/form-data" {
+	if strings.HasPrefix(contentType, "multipart/form-data") {
 		h.uploadFile(c)
 		return
 	}
@@ -51,11 +52,32 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": doc})
 }
 
-// uploadFile 处理文件上传（支持 .html, .txt, .md 文件）
+// uploadFile 处理文件上传
+const maxUploadSize = 5 * 1024 * 1024 // 5MB 限制
+
 func (h *DocumentHandler) uploadFile(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请上传文件 (字段名: file)"})
+		return
+	}
+
+	// 检查文件大小
+	if file.Size > maxUploadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": fmt.Sprintf("文件过大（%.1fMB），目前仅支持5MB以内的文本文件（.txt/.md/.html）", float64(file.Size)/1024/1024),
+		})
+		return
+	}
+
+	// 检测文件类型，仅支持文本类格式
+	docType := detectFileType(file.Filename)
+	supportedTextTypes := map[string]bool{"txt": true, "md": true, "html": true, "htm": true, "go": true, "py": true, "js": true, "ts": true, "json": true, "yaml": true, "yml": true, "xml": true, "css": true, "sql": true, "sh": true}
+	if !supportedTextTypes[docType] {
+		// PDF/DOCX/XLSX 等二进制格式暂不支持自动解析，提示用户
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("暂不支持「.%s」格式自动解析。\n支持的文本格式：.txt .md .html .go .py .js .json .yaml .xml .css .sql\n对于PDF/Word/Excel，请先复制文本内容，通过JSON接口上传（设置 type=pdf/docx 标记类型即可）。", docType),
+		})
 		return
 	}
 
@@ -67,15 +89,25 @@ func (h *DocumentHandler) uploadFile(c *gin.Context) {
 	}
 	defer src.Close()
 
-	buf := make([]byte, file.Size)
+	// 限制读取大小防止内存溢出
+	readSize := file.Size
+	if readSize > maxUploadSize {
+		readSize = maxUploadSize
+	}
+	buf := make([]byte, readSize)
 	if _, err := src.Read(buf); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
 		return
 	}
 	content := string(buf)
 
-	// 自动检测类型
-	docType := detectFileType(file.Filename)
+	// 检查内容是否可读文本（检测空字节比例）
+	if !isTextContent(buf) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("文件「%s」包含大量二进制数据，不是纯文本格式。\n请复制文本内容通过JSON接口上传，或使用.txt/.md格式保存后上传。", file.Filename),
+		})
+		return
+	}
 	title := c.PostForm("title")
 	if title == "" {
 		title = file.Filename
@@ -285,4 +317,29 @@ func stringsTrimSpace(s string) string {
 		return ""
 	}
 	return s[start:end]
+}
+
+// isTextContent 检测是否为可读文本内容（检测空字节比例）
+func isTextContent(buf []byte) bool {
+	if len(buf) == 0 {
+		return true
+	}
+	nullCount := 0
+	nonPrintableCount := 0
+	total := len(buf)
+	// 只检查前 4096 字节
+	checkLen := total
+	if checkLen > 4096 {
+		checkLen = 4096
+	}
+	for i := 0; i < checkLen; i++ {
+		if buf[i] == 0 {
+			nullCount++
+		} else if buf[i] < 8 && buf[i] > 0 {
+			nonPrintableCount++
+		}
+	}
+	// 空字节或控制字符比例超过 5% 则判定为二进制
+	ratio := float64(nullCount+nonPrintableCount) / float64(checkLen)
+	return ratio < 0.05
 }
