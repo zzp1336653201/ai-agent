@@ -53,9 +53,25 @@ func (s *AgentService) Create(req *CreateAgentRequest) (*model.Agent, error) {
 	if req.MaxTokens > 0 { agent.MaxTokens = req.MaxTokens }
 	if req.MemoryType != "" { agent.MemoryType = req.MemoryType }
 
+	// 自动分配知识库：用户未指定则使用 AgentID 作为知识库ID
+	if req.KnowledgeBaseID != "" {
+		agent.KnowledgeBaseID = req.KnowledgeBaseID
+	} else {
+		agent.KnowledgeBaseID = agent.ID // 使用 AgentID 作为知识库ID（一一对应）
+	}
+
+	// 将知识库集合信息写入 SystemPrompt，让 Agent 知道自己的知识库位置
+	collectionName := core.KnowledgeBaseCollection(agent.KnowledgeBaseID)
+	agent.SystemPrompt = fmt.Sprintf(
+		"%s\n\n【知识库信息】你的专属知识库集合名为「%s」，当需要查询知识库时使用 rag_search 工具。",
+		agent.SystemPrompt, collectionName,
+	)
+
 	if err := s.repo.Create(agent); err != nil {
 		return nil, fmt.Errorf("创建失败: %w", err)
 	}
+	fmt.Printf("[AgentService] 创建智能体: %s (ID=%s, 知识库=%s, 集合=%s)\n",
+		agent.Name, agent.ID, agent.KnowledgeBaseID, collectionName)
 	return agent, nil
 }
 
@@ -111,14 +127,15 @@ func (s *AgentService) Delete(id string) error { return s.repo.Delete(id) }
 // ==================== 请求/响应类型 ====================
 
 type CreateAgentRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
-	SystemPrompt string `json:"system_prompt" binding:"required"`
-	Model       string `json:"model"`
-	Temperature float64 `json:"temperature"`
-	MaxTokens   int    `json:"max_tokens"`
-	MemoryType  string `json:"memory_type"`
-	Tools       []string `json:"tools"`
+	Name           string   `json:"name" binding:"required"`
+	Description    string   `json:"description"`
+	SystemPrompt   string   `json:"system_prompt" binding:"required"`
+	Model          string   `json:"model"`
+	Temperature    float64  `json:"temperature"`
+	MaxTokens      int      `json:"max_tokens"`
+	MemoryType     string   `json:"memory_type"`
+	Tools          []string `json:"tools"`
+	KnowledgeBaseID string `json:"knowledge_base_id"` // 不传则自动生成
 }
 
 func truncateMsg(s string) string {

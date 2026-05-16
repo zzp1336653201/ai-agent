@@ -21,9 +21,19 @@ func (r *DocumentRepository) GetByID(id string) (*model.Document, error) {
 	return nil, nil
 }
 
-func (r *DocumentRepository) List() ([]*model.Document, error) {
+func (r *DocumentRepository) List(page, size int) ([]*model.Document, int64, error) {
 	// TODO: 实现数据库列表查询
-	return nil, nil
+	return nil, 0, nil
+}
+
+func (r *DocumentRepository) ListByAgent(agentID string, page, size int) ([]*model.Document, int64, error) {
+	// TODO: 实现按 Agent 查询
+	return nil, 0, nil
+}
+
+func (r *DocumentRepository) ListByCategory(category string, page, size int) ([]*model.Document, int64, error) {
+	// TODO: 实现按分类查询
+	return nil, 0, nil
 }
 
 func (r *DocumentRepository) Delete(id string) error {

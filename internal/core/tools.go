@@ -256,6 +256,10 @@ func (t *RAGSearchTool) Parameters() map[string]interface{} {
 				"type":        "integer",
 				"description": "返回最相关的文档数量，默认3",
 			},
+			"collection": map[string]interface{}{
+				"type":        "string",
+				"description": "向量集合名称（可选），不传则自动使用当前Agent的知识库",
+			},
 		},
 		"required": []string{"query"},
 	}
@@ -268,7 +272,23 @@ func (t *RAGSearchTool) Execute(ctx context.Context, params map[string]interface
 		topK = int(k)
 	}
 
-	results, err := t.engine.vectorDB.Search(ctx, query, topK, "agent_knowledge")
+	// 确定集合名称 — 优先级：参数 > Context > 全局默认
+	collection := ""
+	if c, ok := params["collection"].(string); ok && c != "" {
+		collection = c
+	} else {
+		// 从 Context 读取当前 Agent 的知识库ID
+		if kbID, ok := ctx.Value(ContextKeyKnowledgeBaseID).(string); ok && kbID != "" {
+			collection = KnowledgeBaseCollection(kbID)
+		}
+	}
+	if collection == "" {
+		collection = "agent_knowledge"
+	}
+
+	fmt.Printf("[RAGSearch] query=%q, topK=%d, collection=%s\n", query, topK, collection)
+
+	results, err := t.engine.vectorDB.Search(ctx, query, topK, collection)
 	if err != nil {
 		return nil, fmt.Errorf("向量检索失败: %w", err)
 	}

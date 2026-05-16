@@ -103,6 +103,10 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			fmt.Printf("%s [第%d轮] 启用 tool_choice=auto 强制优先工具调用\n", logPrefix, turn+1)
 		}
 
+		// 注入 Agent 上下文到 context（工具层可通过 ctx 获取当前 Agent 信息和知识库标识）
+		toolCtx := context.WithValue(ctx, ContextKeyKnowledgeBaseID, agent.KnowledgeBaseID)
+		toolCtx = context.WithValue(toolCtx, ContextKeyAgentID, agent.ID)
+
 		fmt.Printf("%s [第%d轮] 调用 LLM (tools=%d)...\n", logPrefix, turn+1, len(tools))
 		resp, err := e.llm.Generate(ctx, req)
 		if err != nil {
@@ -157,8 +161,8 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 				record.Output = NewToolError(fmt.Errorf("未知工具: %s", tc.Function.Name))
 				fmt.Printf("%s [第%d轮] ✗ 未知工具: %s\n", logPrefix, turn+1, tc.Function.Name)
 			} else {
-				toolCtx, cancel := context.WithTimeout(ctx, time.Duration(e.config.ToolsTimeout)*time.Second)
-				output, toolErr := tool.Execute(toolCtx, params)
+				execCtx, cancel := context.WithTimeout(toolCtx, time.Duration(e.config.ToolsTimeout)*time.Second)
+				output, toolErr := tool.Execute(execCtx, params)
 				cancel()
 				if toolErr != nil {
 					record.Output = NewToolError(toolErr)
@@ -564,6 +568,25 @@ type OrchestrationResult struct {
 	MainResult *AgentRunResult            `json:"main_result"`
 	SubResults map[string]*AgentRunResult `json:"sub_results"`
 	Errors     []string                   `json:"errors,omitempty"`
+}
+
+// ==================== Context Key（跨层传参，避免接口污染） ====================
+
+type contextKey string
+
+const (
+	// ContextKeyKnowledgeBaseID Agent当前使用的知识库ID，用于工具层路由到正确的向量集合
+	ContextKeyKnowledgeBaseID contextKey = "knowledge_base_id"
+	// ContextKeyAgentID 当前运行的Agent ID
+	ContextKeyAgentID contextKey = "agent_id"
+)
+
+// KnowledgeBaseCollection 根据知识库ID生成向量集合名称
+func KnowledgeBaseCollection(kbID string) string {
+	if kbID == "" {
+		return "agent_knowledge" // 全局默认集合
+	}
+	return "kb_" + kbID
 }
 
 // ==================== 流式事件类型 ====================

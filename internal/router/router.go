@@ -41,10 +41,11 @@ func RegisterRoutes(
 		// ========== 知识库/文档接口 ==========
 		docs := api.Group("/documents")
 		{
-			docs.POST("", docHandler.Upload)       // 上传文档
-			docs.GET("", docHandler.List)          // 列出文档
-			docs.GET("/:id", docHandler.Get)       // 获取文档详情
-			docs.DELETE("/:id", docHandler.Delete) // 删除文档
+			docs.POST("", docHandler.Upload)              // 上传文档（JSON 或文件上传）
+			docs.POST("/import-url", docHandler.ImportFromURL) // 从 URL 导入知识
+			docs.GET("", docHandler.List)                 // 列出文档（支持 ?agent_id= / ?category=）
+			docs.GET("/:id", docHandler.Get)              // 获取文档详情
+			docs.DELETE("/:id", docHandler.Delete)        // 删除文档
 		}
 
 		// ========== RAG 问答接口 ==========

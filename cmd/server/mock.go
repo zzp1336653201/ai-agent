@@ -43,6 +43,12 @@ func (r *MockDocumentRepository) GetByID(id string) (*model.Document, error)   {
 func (r *MockDocumentRepository) List(page, size int) ([]*model.Document, int64, error) {
 	return []*model.Document{}, 0, nil
 }
+func (r *MockDocumentRepository) ListByAgent(agentID string, page, size int) ([]*model.Document, int64, error) {
+	return []*model.Document{}, 0, nil
+}
+func (r *MockDocumentRepository) ListByCategory(category string, page, size int) ([]*model.Document, int64, error) {
+	return []*model.Document{}, 0, nil
+}
 func (r *MockDocumentRepository) Delete(id string) error                    { return nil }
 
 // 确保实现了 service 接口

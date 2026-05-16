@@ -39,9 +39,10 @@ func (s *RAGService) SetAgentEngine(engine *core.AgentEngine) {
 type QueryRequest struct {
 	Query      string `json:"query"`
 	TopK       int    `json:"top_k"`
-	Collection string `json:"collection"`
-	UseMemory  bool   `json:"use_memory"` // 是否结合记忆检索
-	Hybrid     bool   `json:"hybrid"`    // 是否使用混合检索
+	Collection string `json:"collection"`       // 指定向量集合（可选）
+	AgentID    string `json:"agent_id"`         // 指定 Agent（可选），用于自动路由到对应知识库
+	UseMemory  bool   `json:"use_memory"`       // 是否结合记忆检索
+	Hybrid     bool   `json:"hybrid"`           // 是否使用混合检索
 }
 
 // QueryResponse 查询响应
@@ -66,11 +67,22 @@ type MemoryRef struct {
 	Summary  string `json:"summary"`
 }
 
+// resolveCollection 根据请求参数解析向量集合名称
+func (s *RAGService) resolveCollection(req *QueryRequest) string {
+	if req.Collection != "" {
+		return req.Collection
+	}
+	if req.AgentID != "" {
+		return "kb_" + req.AgentID
+	}
+	return "agent_knowledge" // 全局默认集合
+}
+
 // Query 执行 RAG 检索增强生成 — 核心流程：
 // 用户提问 → 向量检索 + 记忆检索 → 上下文构建 → (有内容则RAG / 无内容则Agent工具调用) → 返回答案+来源
 func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
 	if req.TopK == 0 { req.TopK = 5 }
-	if req.Collection == "" { req.Collection = "agent_knowledge" }
+	req.Collection = s.resolveCollection(req)
 
 	var allSources []string
 	var sourceInfos []SourceInfo

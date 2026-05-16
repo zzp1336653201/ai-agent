@@ -10,23 +10,35 @@ import (
 
 // Document 知识库文档
 type Document struct {
-	ID        string    `json:"id" gorm:"primaryKey;type:varchar(36)"`
-	Title     string    `json:"title" gorm:"type:varchar(255);not null"`
-	Content   string    `json:"content" gorm:"type:text"`
-	Type      string    `json:"type" gorm:"type:varchar(20)"` // pdf, docx, md, txt
-	FilePath  string    `json:"file_path" gorm:"type:varchar(500)"`
-	Metadata  string    `json:"metadata" gorm:"type:jsonb"` // JSON 格式元数据
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	Title      string    `json:"title" gorm:"type:varchar(255);not null"`
+	Content    string    `json:"content" gorm:"type:text"`
+	Summary    string    `json:"summary" gorm:"type:text"`            // 文档摘要（知识管理员可手动编辑）
+	Type       string    `json:"type" gorm:"type:varchar(20)"`       // txt|md|html|pdf|docx|url
+	Category   string    `json:"category" gorm:"type:varchar(50);index;default:''"` // 分类：product|tech|faq|policy|manual|other
+	Tags       string    `json:"tags" gorm:"type:jsonb"`             // 标签数组 JSON，如 ["Go","入门","教程"]
+	SourceURL  string    `json:"source_url" gorm:"type:varchar(500);default:''"`  // 来源URL（从URL导入时自动记录）
+	FilePath   string    `json:"file_path" gorm:"type:varchar(500);default:''"`
+	AgentID    string    `json:"agent_id" gorm:"index;type:varchar(36);default:''"` // 所属 Agent（空=全局知识库）
+	ChunkCount int       `json:"chunk_count" gorm:"default:0"`       // 分块数量
+	Status     string    `json:"status" gorm:"type:varchar(20);default:'active'"` // active|archived|draft
+	Metadata   string    `json:"metadata" gorm:"type:jsonb"`         // JSON 格式扩展元数据
+	CreatedBy  string    `json:"created_by" gorm:"type:varchar(100);default:''"` // 创建者标识（admin|agent|system）
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-func NewDocument(title, content, docType, filePath string) *Document {
+func NewDocument(title, content, docType, filePath, agentID string) *Document {
 	return &Document{
 		ID:        uuid.New().String(),
 		Title:     title,
 		Content:   content,
 		Type:      docType,
 		FilePath:  filePath,
+		AgentID:   agentID,
+		Tags:      "[]",
+		Status:    "active",
+		CreatedBy: "admin",
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -36,18 +48,19 @@ func NewDocument(title, content, docType, filePath string) *Document {
 
 // Agent 智能体定义
 type Agent struct {
-	ID          string         `json:"id" gorm:"primaryKey;type:varchar(36)"`
-	Name        string         `json:"name" gorm:"type:varchar(100);not null"`
-	Description string         `json:"description" gorm:"type:text"`
-	SystemPrompt string        `json:"system_prompt" gorm:"type:text;not null"` // System Prompt 模板
-	Model       string         `json:"model" gorm:"type:varchar(50)"`
-	Temperature float64        `json:"temperature"`
-	MaxTokens   int            `json:"max_tokens"`
-	Tools       string         `json:"tools" gorm:"type:jsonb"` // 工具列表 JSON
-	MemoryType  string         `json:"memory_type" gorm:"type:varchar(20)"` // short|long|none
-	Status      string         `json:"status" gorm:"type:varchar(20);default:'active'"` // active|inactive
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID             string         `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	Name           string         `json:"name" gorm:"type:varchar(100);not null"`
+	Description    string         `json:"description" gorm:"type:text"`
+	SystemPrompt   string         `json:"system_prompt" gorm:"type:text;not null"` // System Prompt 模板
+	Model          string         `json:"model" gorm:"type:varchar(50)"`
+	Temperature    float64        `json:"temperature"`
+	MaxTokens      int            `json:"max_tokens"`
+	Tools          string         `json:"tools" gorm:"type:jsonb"` // 工具列表 JSON
+	MemoryType     string         `json:"memory_type" gorm:"type:varchar(20)"` // short|long|none
+	KnowledgeBaseID string        `json:"knowledge_base_id" gorm:"type:varchar(36);default:''"` // 关联的知识库ID（空=使用全局知识库）
+	Status         string         `json:"status" gorm:"type:varchar(20);default:'active'"` // active|inactive
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 func NewAgent(name, description, systemPrompt string) *Agent {

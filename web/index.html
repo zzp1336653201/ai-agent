@@ -215,6 +215,37 @@
             background: var(--bg-card);
             border-radius: 1rem;
             border: 1px solid var(--border);
+            align-items: flex-end;
+        }
+        
+        .chat-toolbar {
+            display: flex;
+            gap: 0.25rem;
+            align-items: center;
+            padding-bottom: 0.25rem;
+        }
+        
+        .chat-tool-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0.4rem;
+            border-radius: 0.4rem;
+            font-size: 1.2rem;
+            line-height: 1;
+            transition: all 0.2s;
+        }
+        
+        .chat-tool-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--text);
+        }
+        
+        .chat-input-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
         }
         
         .chat-input {
@@ -454,16 +485,27 @@
                 <div class="card-title">💬 RAG 智能问答</div>
                 <div class="chat-messages" id="chat-messages">
                     <div class="message assistant">
-                        👋 你好！我是 SirenAgent 智能助手。请先上传文档到知识库，然后我就能基于文档内容回答你的问题。
+                        👋 你好！我是 SirenAgent 智能助手。<br><br>
+                        📎 你可以 <strong>拖拽文件</strong> 到此处、点击输入框左边的 📎 按钮、或 Ctrl+V 粘贴文件，上传知识文档。<br><br>
+                        上传后我就能基于文档内容回答你的问题了。
                     </div>
                 </div>
                 <div class="chat-input-container">
-                    <textarea 
-                        class="chat-input" 
-                        id="chat-input" 
-                        placeholder="输入你的问题... (Shift+Enter 换行，Enter 发送)"
-                        rows="1"
-                    ></textarea>
+                    <div class="chat-toolbar">
+                        <label class="chat-tool-btn" title="上传文件到知识库" id="chat-upload-btn">
+                            📎
+                            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.html,.htm" style="display:none">
+                        </label>
+                    </div>
+                    <div class="chat-input-wrapper">
+                        <div id="chat-file-preview" style="display:none; margin-bottom:0.5rem;"></div>
+                        <textarea 
+                            class="chat-input" 
+                            id="chat-input" 
+                            placeholder="输入你的问题... (Shift+Enter 换行，Enter 发送)"
+                            rows="1"
+                        ></textarea>
+                    </div>
                     <button class="btn btn-primary" id="chat-send">发送</button>
                 </div>
             </div>
@@ -500,11 +542,11 @@
                 <div class="card">
                     <div class="card-title">📤 上传文档</div>
                     <div class="file-upload" onclick="document.getElementById('file-input').click()">
-                        <input type="file" id="file-input" multiple accept=".txt,.pdf,.doc,.docx,.md">
+                        <input type="file" id="file-input" multiple accept=".txt,.md,.html,.htm,.pdf,.doc,.docx">
                         <div class="file-upload-icon">📄</div>
                         <div>点击或拖拽文件到此处上传</div>
                         <div style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
-                            支持 TXT, PDF, DOC, DOCX, MD 格式
+                            支持 TXT, MD, HTML, PDF, DOC, DOCX 格式
                         </div>
                     </div>
                     <div id="upload-progress" style="margin-top: 1rem;"></div>
@@ -643,6 +685,112 @@
         });
         
         chatSend.addEventListener('click', sendMessage);
+
+// ==================== Chat File Upload ====================
+let chatUploadedFiles = [];
+
+// Upload button click
+document.getElementById('chat-file-input').addEventListener('change', async (e) => {
+    const files = e.target.files;
+    if (!files.length) return;
+    await uploadChatFiles(files);
+    e.target.value = '';
+});
+
+// Drag and drop
+const chatContainer = document.querySelector('.chat-container');
+chatContainer.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    chatContainer.style.borderColor = 'var(--primary)';
+    chatContainer.style.background = 'rgba(99, 102, 241, 0.05)';
+});
+chatContainer.addEventListener('dragleave', () => {
+    chatContainer.style.borderColor = '';
+    chatContainer.style.background = '';
+});
+chatContainer.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    chatContainer.style.borderColor = '';
+    chatContainer.style.background = '';
+    const files = e.dataTransfer.files;
+    if (files.length) {
+        await uploadChatFiles(files);
+    }
+});
+
+// Paste file from clipboard
+chatInput.addEventListener('paste', async (e) => {
+    const items = e.clipboardData.items;
+    const files = [];
+    for (const item of items) {
+        if (item.kind === 'file') {
+            files.push(item.getAsFile());
+        }
+    }
+    if (files.length) {
+        e.preventDefault();
+        await uploadChatFiles(files);
+    }
+});
+
+async function uploadChatFiles(files) {
+    const preview = document.getElementById('chat-file-preview');
+    preview.style.display = 'flex';
+    preview.style.flexWrap = 'wrap';
+    preview.style.gap = '0.4rem';
+    
+    for (const file of files) {
+        // Show uploading indicator
+        const fileTag = document.createElement('span');
+        fileTag.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;padding:0.25rem 0.6rem;background:var(--bg-dark);border-radius:0.4rem;font-size:0.8rem;border:1px solid var(--border);';
+        fileTag.innerHTML = `📄 ${file.name} <span style="color:var(--text-muted);font-size:0.7rem;">上传中...</span>`;
+        preview.appendChild(fileTag);
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            if (currentAgentId) formData.append('agent_id', currentAgentId);
+            
+            const response = await fetch(`${API_BASE}/documents`, {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            
+            // Update tag to success
+            const docId = result.data?.id || '';
+            fileTag.innerHTML = `✅ ${file.name} <span style="color:#22c55e;font-size:0.7rem;">已入库</span>`;
+            
+            chatUploadedFiles.push({ name: file.name, id: docId });
+            
+            // Auto-add message about upload
+            addFileUploadMessage(file.name, docId);
+        } catch (error) {
+            fileTag.innerHTML = `❌ ${file.name} <span style="color:#ef4444;font-size:0.7rem;">失败</span>`;
+            setTimeout(() => fileTag.remove(), 3000);
+        }
+    }
+    
+    // Clear preview after 5 seconds
+    setTimeout(() => {
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+    }, 5000);
+    
+    loadDocuments();
+}
+
+function addFileUploadMessage(filename, docId) {
+    const msg = document.createElement('div');
+    msg.className = 'message assistant';
+    msg.innerHTML = `📎 已上传 <strong>${filename}</strong> 到知识库${docId ? '，现在你可以问我关于这个文件的问题了' : ''}`;
+    msg.style.fontSize = '0.9rem';
+    msg.style.opacity = '0.8';
+    chatMessages.appendChild(msg);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
         
         async function sendMessage() {
             const message = chatInput.value.trim();
