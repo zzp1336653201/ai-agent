@@ -494,7 +494,7 @@
                     <div class="chat-toolbar">
                         <label class="chat-tool-btn" title="上传文件到知识库" id="chat-upload-btn">
                             📎
-                            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.html,.htm" style="display:none">
+                            <input type="file" id="chat-file-input" multiple style="display:none">
                         </label>
                     </div>
                     <div class="chat-input-wrapper">
@@ -542,11 +542,11 @@
                 <div class="card">
                     <div class="card-title">📤 上传文档</div>
                     <div class="file-upload" onclick="document.getElementById('file-input').click()">
-                        <input type="file" id="file-input" multiple accept=".txt,.md,.html,.htm,.pdf,.doc,.docx">
+                        <input type="file" id="file-input" multiple style="display:none">
                         <div class="file-upload-icon">📄</div>
                         <div>点击或拖拽文件到此处上传</div>
                         <div style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
-                            支持 TXT, MD, HTML, PDF, DOC, DOCX 格式
+                            支持 TXT, MD, HTML, PDF, DOC, DOCX, XLSX 等常见格式
                         </div>
                     </div>
                     <div id="upload-progress" style="margin-top: 1rem;"></div>
@@ -740,6 +740,15 @@ async function uploadChatFiles(files) {
     preview.style.gap = '0.4rem';
     
     for (const file of files) {
+        // Skip directories / empty items from drag-and-drop
+        if (!file || file.size === undefined || file.size === null) {
+            continue;
+        }
+        // Skip folders (size=0 items dragged from desktop)
+        if (file.size === 0 && !file.type) {
+            continue;
+        }
+        
         // Show uploading indicator
         const fileTag = document.createElement('span');
         fileTag.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;padding:0.25rem 0.6rem;background:var(--bg-dark);border-radius:0.4rem;font-size:0.8rem;border:1px solid var(--border);';
@@ -756,7 +765,10 @@ async function uploadChatFiles(files) {
                 body: formData
             });
             
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                const errBody = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}: ${errBody.slice(0, 100)}`);
+            }
             const result = await response.json();
             
             // Update tag to success
@@ -768,12 +780,13 @@ async function uploadChatFiles(files) {
             // Auto-add message about upload
             addFileUploadMessage(file.name, docId);
         } catch (error) {
-            fileTag.innerHTML = `❌ ${file.name} <span style="color:#ef4444;font-size:0.7rem;">失败</span>`;
-            setTimeout(() => fileTag.remove(), 3000);
+            console.error('Upload failed:', error);
+            fileTag.innerHTML = `❌ ${file.name} <span style="color:#ef4444;font-size:0.7rem;">${error.message.slice(0, 30)}</span>`;
+            setTimeout(() => fileTag.remove(), 5000);
         }
     }
     
-    // Clear preview after 5 seconds
+    // Clear preview
     setTimeout(() => {
         preview.style.display = 'none';
         preview.innerHTML = '';
@@ -956,8 +969,16 @@ function addFileUploadMessage(filename, docId) {
             if (!files.length) return;
             
             const progress = document.getElementById('upload-progress');
+            let successCount = 0;
+            let failCount = 0;
             
             for (const file of files) {
+                // 跳过空文件（可能选中的是文件夹）
+                if (!file || file.size === undefined || file.size === null || (file.size === 0 && !file.type)) {
+                    failCount++;
+                    continue;
+                }
+                
                 progress.innerHTML = `<div style="color: var(--text-muted);">上传中: ${file.name}</div>`;
                 
                 const formData = new FormData();
@@ -969,14 +990,21 @@ function addFileUploadMessage(filename, docId) {
                         body: formData
                     });
                     
-                    if (!response.ok) throw new Error('上传失败');
+                    if (!response.ok) {
+                        const errText = await response.text().catch(() => '');
+                        throw new Error(errText.slice(0, 80) || `HTTP ${response.status}`);
+                    }
                     showToast(`${file.name} 上传成功！`);
+                    successCount++;
                 } catch (error) {
                     showToast(`${file.name} 上传失败: ${error.message}`, 'error');
+                    failCount++;
                 }
             }
             
-            progress.innerHTML = '';
+            progress.innerHTML = successCount > 0
+                ? `<div style="color: #22c55e; font-size: 0.9rem;">✅ 成功 ${successCount} 个文件</div>`
+                : '';
             e.target.value = '';
             loadDocuments();
         });
