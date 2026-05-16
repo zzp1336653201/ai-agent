@@ -14,6 +14,7 @@ func RegisterRoutes(
 	workflowHandler *handler.WorkflowHandler,
 	docHandler *handler.DocumentHandler,
 	queryHandler *handler.QueryHandler,
+	traceHandler *handler.TraceHandler,
 ) {
 	api := r.Group("/api/v1")
 	{
@@ -50,6 +51,13 @@ func RegisterRoutes(
 
 		// ========== RAG 问答接口 ==========
 		api.POST("/query", queryHandler.Query) // 检索增强问答
+
+		// ========== Trace 追踪记录 ==========
+		traces := api.Group("/traces")
+		{
+			traces.GET("", traceHandler.List)       // 列出追踪记录
+			traces.GET("/:id", traceHandler.Get)    // 查看单条追踪详情
+		}
 
 		// ========== 健康检查 ==========
 		api.GET("/health", func(c *gin.Context) {

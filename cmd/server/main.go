@@ -105,7 +105,12 @@ func main() {
 	// 设置 Prompt 管理器
 	agentEngine.SetPromptManager(promptMgr)
 
-	// 6.1 初始化 Guardrails 防护系统
+	// 6.1 初始化 Evaluator-Optimizer 评估优化器
+	evaluator := core.NewEvaluator(llmProvider, cfg.LLM.Model)
+	agentEngine.SetEvaluator(evaluator)
+	sugar.Info("✅ Evaluator-Optimizer 评估优化器已启用 (最多2轮优化)")
+
+	// 6.2 初始化 Guardrails 防护系统
 	if cfg.Guardrails.Enabled {
 		guardrailMgr := core.NewGuardrailManager()
 		if cfg.Guardrails.EnableSensitive {
@@ -162,6 +167,7 @@ func main() {
 	workflowHandler := handler.NewWorkflowHandler(workflowSvc)
 	docHandler := handler.NewDocumentHandler(docSvc)
 	queryHandler := handler.NewQueryHandler(ragSvc)
+	traceHandler := handler.NewTraceHandler()
 
 	// 11. 启动 HTTP 服务
 	gin.SetMode(gin.ReleaseMode)
@@ -181,7 +187,7 @@ func main() {
 		c.File("./web/index.html")
 	})
 
-	router.RegisterRoutes(r, agentHandler, workflowHandler, docHandler, queryHandler)
+	router.RegisterRoutes(r, agentHandler, workflowHandler, docHandler, queryHandler, traceHandler)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	go func() {

@@ -19,7 +19,8 @@ type AgentEngine struct {
 	tools     map[string]Tool
 	prompts   PromptManager
 	config    EngineConfig
-	guardrail *GuardrailManager // 防护管理器（可选）
+	guardrail *GuardrailManager  // 防护管理器（可选）
+	evaluator *Evaluator         // 评估优化器（可选）
 }
 
 // EngineConfig 引擎配置
@@ -213,6 +214,11 @@ func (e *AgentEngine) SetPromptManager(pm PromptManager) {
 // SetGuardrailManager 设置防护管理器
 func (e *AgentEngine) SetGuardrailManager(gm *GuardrailManager) {
 	e.guardrail = gm
+}
+
+// SetEvaluator 设置评估优化器
+func (e *AgentEngine) SetEvaluator(ev *Evaluator) {
+	e.evaluator = ev
 }
 
 // GetTool 获取工具

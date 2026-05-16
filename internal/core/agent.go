@@ -20,6 +20,17 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		return nil, fmt.Errorf("引擎验证失败: %w", err)
 	}
 
+	// ===== Trace: 开始追踪 =====
+	traceID := generateTraceID()
+	traceStart := time.Now()
+	trace := &TraceRecord{
+		TraceID:     traceID,
+		AgentName:   agent.Name,
+		AgentID:     agent.ID,
+		UserMessage: truncateForLog(userMessage, 100),
+		StartTime:   traceStart,
+	}
+
 	// ===== Guardrail 1: 输入防护 =====
 	processedInput := userMessage
 	if e.guardrail != nil {
@@ -238,6 +249,21 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	result.TokenUsage = totalToken
 	fmt.Printf("%s 推理完成, 轮次:%d, 工具调用:%d次, Token:%d\n", logPrefix, result.Turns, len(result.ToolCalls), totalToken.TotalTokens)
 
+	// ===== Trace: 记录工具明细 =====
+	for _, tc := range result.ToolCalls {
+		trace.ToolBreakdown = append(trace.ToolBreakdown, ToolTrace{
+			ToolName:   tc.ToolName,
+			DurationMs: tc.LatencyMs,
+			Success:    tc.Output != nil && tc.Output.Error == "",
+			Error:      toolErrString(tc.Output),
+		})
+	}
+	trace.TurnCount = result.Turns
+	trace.ToolCallCount = len(result.ToolCalls)
+	trace.TotalTokens = totalToken.TotalTokens
+	trace.PromptTokens = totalToken.PromptTokens
+	trace.CompletionTokens = totalToken.CompletionTokens
+
 	// 格式化答案排版（分段、列表间距等）
 	result.Answer = formatAnswer(result.Answer)
 
@@ -249,11 +275,32 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		}
 		if outputResult.Action == ActionWarn {
 			fmt.Printf("%s ⚠️ 输出质量警告: %s\n", logPrefix, outputResult.Reason)
-			// 在答案后追加质量提示
 			safeOutput = safeOutput + "\n\n> ⚠️ *该回答可能存在质量问题，仅供参考*"
 		}
 		result.Answer = safeOutput
 	}
+
+	// ===== Evaluator-Optimizer: 评估并优化回答质量 =====
+	if e.evaluator != nil && result.Answer != "" && result.Turns > 0 {
+		optimized, quality, rounds := e.evaluator.OptimizeLoop(ctx, processedInput, result.Answer, result.ToolCalls)
+		if rounds > 0 {
+			fmt.Printf("%s 📊 评估优化: 评分=%d/10, 优化轮次=%d, 长度=%d→%d字\n",
+				logPrefix, quality.Score, rounds,
+				len([]rune(result.Answer)), len([]rune(optimized)))
+			result.Answer = optimized
+		}
+	}
+
+	// ===== Trace: 最终化并推送 =====
+	trace.EndTime = time.Now()
+	trace.DurationMs = trace.EndTime.Sub(traceStart).Milliseconds()
+	trace.TotalTokens = totalToken.TotalTokens
+	trace.PromptTokens = totalToken.PromptTokens
+	trace.CompletionTokens = totalToken.CompletionTokens
+	trace.TurnCount = result.Turns
+	trace.ToolCallCount = len(result.ToolCalls)
+	GlobalTraceStore.Push(trace)
+	PrintTraceSummary(trace)
 
 	// 6. 保存本次交互到短期记忆
 	go func() {
@@ -263,6 +310,17 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	}()
 
 	return result, nil
+}
+
+// toolErrString 获取工具执行错误信息
+func toolErrString(tc *ToolCallRecord) string {
+	if tc == nil || tc.Output == nil {
+		return ""
+	}
+	if tc.Output.Error != "" {
+		return tc.Output.Error
+	}
+	return ""
 }
 
 // RunStream 流式执行 Agent
@@ -596,6 +654,208 @@ func (r *MultiAgentRunner) buildSubTaskSummary(subResults map[string]*AgentRunRe
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// ==================== Handoff 模式 — 去中心化Agent交接 ====================
+
+// HandoffData Agent交接的数据上下文
+type HandoffData struct {
+	FromAgentID   string `json:"from_agent_id"`
+	FromAgentName string `json:"from_agent_name"`
+	ToAgentID     string `json:"to_agent_id"`
+	Context       string `json:"context"`       // 已完成的上下文
+	UserQuery     string `json:"user_query"`    // 原始用户问题
+	HandoffReason string `json:"handoff_reason"` // 交接原因
+}
+
+// HandoffTool 让Agent可以主动将任务交接给其他Agent
+type HandoffTool struct {
+	runner *MultiAgentRunner
+}
+
+func NewHandoffTool(runner *MultiAgentRunner) *HandoffTool {
+	return &HandoffTool{runner: runner}
+}
+
+func (t *HandoffTool) Name() string { return "handoff" }
+func (t *HandoffTool) Description() string {
+	return "将任务交接给另一个专门的Agent处理。当你遇到超出自己专业范围的任务，或者需要其他Agent配合时使用此工具。"
+}
+func (t *HandoffTool) Parameters() map[string]interface{} {
+	// 动态获取可用的Agent列表
+	agentList := t.runner.ListAgentNames()
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"target_agent": map[string]interface{}{
+				"type":        "string",
+				"description": fmt.Sprintf("目标Agent名称。可选: %s", strings.Join(agentList, ", ")),
+			},
+			"reason": map[string]interface{}{
+				"type":        "string",
+				"description": "交接原因说明，让目标Agent了解为什么转给它处理",
+			},
+			"context_summary": map[string]interface{}{
+				"type":        "string",
+				"description": "已经完成的工作总结，让目标Agent了解当前进展",
+			},
+		},
+		"required": []string{"target_agent", "reason"},
+	}
+}
+
+func (t *HandoffTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	targetName, _ := params["target_agent"].(string)
+	reason, _ := params["reason"].(string)
+	contextSummary, _ := params["context_summary"].(string)
+
+	if targetName == "" {
+		return NewToolResult("交接失败：未指定目标Agent"), nil
+	}
+
+	// 查找目标Agent
+	targetID := t.runner.FindAgentIDByName(targetName)
+	if targetID == "" {
+		return NewToolResult(fmt.Sprintf("交接失败：找不到Agent「%s」，可选Agent: %s",
+			targetName, strings.Join(t.runner.ListAgentNames(), ", "))), nil
+	}
+
+	handoffResult := fmt.Sprintf("✅ 已交接给「%s」\n原因: %s\n上下文: %s\n请等待「%s」处理完成。",
+		targetName, reason, contextSummary, targetName)
+
+	return NewToolResult(handoffResult), nil
+}
+
+// HandoffChain 管理Agent交接链 — 执行一系列Agent的按序交接
+func (r *MultiAgentRunner) HandoffChain(
+	ctx context.Context,
+	startAgentID string,
+	userMessage string,
+) (*HandoffChainResult, error) {
+	result := &HandoffChainResult{
+		Chain: make([]*HandoffChainLink, 0),
+	}
+
+	currentAgentID := startAgentID
+	currentQuery := userMessage
+	contextBuf := ""
+	maxHandoffs := 5
+	handoffCount := 0
+
+	for handoffCount < maxHandoffs {
+		engine, exists := r.engines[currentAgentID]
+		if !exists {
+			return nil, fmt.Errorf("Agent %s 未注册", currentAgentID)
+		}
+
+		// 为当前Agent创建handoff工具，让它可以交接给其他Agent
+		handoffTool := NewHandoffTool(r)
+		engine.RegisterTool(handoffTool)
+
+		// 构建上下文消息
+		finalQuery := currentQuery
+		if contextBuf != "" {
+			finalQuery = fmt.Sprintf("用户问题: %s\n\n已完成的工作:\n%s\n\n请继续处理。", currentQuery, contextBuf)
+		}
+
+		link := &HandoffChainLink{
+			AgentID:   currentAgentID,
+			AgentName: currentAgentID,
+		}
+
+		dummyAgent := &model.Agent{
+			ID:           currentAgentID,
+			Name:         currentAgentID,
+			SystemPrompt: fmt.Sprintf("你是「%s」。你可以处理当前任务，也可以通过handoff工具交接给其他Agent。如果任务超出范围，及时交接。", link.AgentName),
+		}
+
+		agentResult, err := engine.Run(ctx, dummyAgent, finalQuery)
+		if err != nil {
+			link.Error = err.Error()
+			link.Success = false
+			result.Chain = append(result.Chain, link)
+			result.HasError = true
+			result.FinalAnswer = fmt.Sprintf("处理失败: %s", err.Error())
+			return result, nil
+		}
+
+		link.Result = agentResult.Answer
+		link.Success = true
+		link.ToolCalls = len(agentResult.ToolCalls)
+		result.Chain = append(result.Chain, link)
+
+		// 检查是否触发了handoff（通过检查是否调用了handoff工具）
+		handoffFound := false
+		for _, tc := range agentResult.ToolCalls {
+			if tc.ToolName == "handoff" {
+				targetName, _ := tc.Input["target_agent"].(string)
+				reason, _ := tc.Input["reason"].(string)
+
+				targetID := r.FindAgentIDByName(targetName)
+				if targetID != "" && targetID != currentAgentID {
+					contextBuf = fmt.Sprintf("%s\n---\n[%s已完成]: %s", contextBuf, link.AgentName, agentResult.Answer)
+					currentAgentID = targetID
+					currentQuery = reason
+					handoffFound = true
+					handoffCount++
+					break
+				}
+			}
+		}
+
+		if !handoffFound {
+			// 没有handoff，说明当前Agent完成了最终任务
+			result.FinalAnswer = agentResult.Answer
+			result.FinalAgentID = currentAgentID
+			return result, nil
+		}
+	}
+
+	result.HasError = true
+	result.FinalAnswer = fmt.Sprintf("交接链过长（超过%d次），已自动终止。最后处理的Agent: %s", maxHandoffs, currentAgentID)
+	return result, nil
+}
+
+// ListAgentNames 列出所有已注册的Agent名称
+func (r *MultiAgentRunner) ListAgentNames() []string {
+	names := make([]string, 0)
+	for id := range r.engines {
+		names = append(names, id)
+	}
+	return names
+}
+
+// FindAgentIDByName 通过名称查找AgentID
+func (r *MultiAgentRunner) FindAgentIDByName(name string) string {
+	// 先按ID精确匹配
+	if _, exists := r.engines[name]; exists {
+		return name
+	}
+	// 按名称模糊匹配
+	for id := range r.engines {
+		if id == name {
+			return id
+		}
+	}
+	return ""
+}
+
+// HandoffChainResult 交接链执行结果
+type HandoffChainResult struct {
+	Chain        []*HandoffChainLink `json:"chain"`
+	FinalAnswer  string              `json:"final_answer"`
+	FinalAgentID string              `json:"final_agent_id"`
+	HasError     bool                `json:"has_error"`
+}
+
+// HandoffChainLink 交接链中的一个环节
+type HandoffChainLink struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	Result    string `json:"result"`
+	ToolCalls int    `json:"tool_calls"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
 }
 
 // SubTask 子任务定义
