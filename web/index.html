@@ -831,8 +831,9 @@ function addFileUploadMessage(filename, docId) {
         // ==================== Agents Functions ====================
         async function loadAgents() {
             try {
-                const data = await apiCall('/agents');
-                agents = data.agents || data || [];
+                const resp = await apiCall('/agents');
+                const data = resp.data || resp;
+                agents = Array.isArray(data) ? data : [];
                 renderAgents();
             } catch (error) {
                 document.getElementById('agents-table').innerHTML = 
@@ -864,12 +865,16 @@ function addFileUploadMessage(filename, docId) {
             document.getElementById('modal-title').textContent = '创建智能体';
             document.getElementById('modal-content').innerHTML = `
                 <div class="form-group">
-                    <label class="form-label">名称</label>
-                    <input type="text" class="form-input" id="agent-name" placeholder="输入智能体名称">
+                    <label class="form-label">名称 <span style="color:#ef4444;">*</span></label>
+                    <input type="text" class="form-input" id="agent-name" placeholder="输入智能体名称" value="默认助手">
                 </div>
                 <div class="form-group">
                     <label class="form-label">描述</label>
-                    <textarea class="form-textarea" id="agent-desc" placeholder="描述这个智能体的功能"></textarea>
+                    <textarea class="form-textarea" id="agent-desc" placeholder="描述这个智能体的功能">一个友好的AI助手</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">角色设定 <span style="color:#ef4444;">*</span></label>
+                    <textarea class="form-textarea" id="agent-prompt" placeholder="输入System Prompt" style="min-height:80px;">你是一个专业、友好的智能助手，擅长解答问题、搜索信息、处理文档。</textarea>
                 </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
                     <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
@@ -881,16 +886,21 @@ function addFileUploadMessage(filename, docId) {
         async function createAgent() {
             const name = document.getElementById('agent-name').value.trim();
             const description = document.getElementById('agent-desc').value.trim();
+            const systemPrompt = document.getElementById('agent-prompt').value.trim();
             
             if (!name) {
                 showToast('请输入名称', 'error');
+                return;
+            }
+            if (!systemPrompt) {
+                showToast('请输入角色设定', 'error');
                 return;
             }
             
             try {
                 await apiCall('/agents', {
                     method: 'POST',
-                    body: JSON.stringify({ name, description })
+                    body: JSON.stringify({ name, description, system_prompt: systemPrompt })
                 });
                 showToast('创建成功！');
                 document.getElementById('modal').style.display = 'none';
@@ -909,8 +919,9 @@ function addFileUploadMessage(filename, docId) {
         // ==================== Knowledge Functions ====================
         async function loadDocuments() {
             try {
-                const data = await apiCall('/documents');
-                documents = data.documents || data || [];
+                const resp = await apiCall('/documents');
+                const data = resp.data || resp;
+                documents = Array.isArray(data) ? data : [];
                 renderDocuments();
             } catch (error) {
                 document.getElementById('docs-list').innerHTML = 
@@ -928,8 +939,11 @@ function addFileUploadMessage(filename, docId) {
             container.innerHTML = documents.map(doc => `
                 <div style="padding: 0.75rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        <div style="font-weight: 500;">${doc.name || doc.filename || '文档'}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);">${doc.created_at || doc.createdAt || ''}</div>
+                        <div style="font-weight: 500;">${doc.title || '未命名文档'}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">
+                            ${doc.category ? `<span class="badge badge-success">${doc.category}</span> ` : ''}
+                            ${doc.created_at ? new Date(doc.created_at).toLocaleDateString() : ''}
+                        </div>
                     </div>
                     <button class="btn" style="color: #ef4444;" onclick="deleteDocument('${doc.id}')">删除</button>
                 </div>
@@ -982,8 +996,9 @@ function addFileUploadMessage(filename, docId) {
         // ==================== Workflows Functions ====================
         async function loadWorkflows() {
             try {
-                const data = await apiCall('/workflows');
-                workflows = data.workflows || data || [];
+                const resp = await apiCall('/workflows');
+                const data = resp.data || resp;
+                workflows = Array.isArray(data) ? data : [];
                 renderWorkflows();
             } catch (error) {
                 document.getElementById('workflows-table').innerHTML = 
