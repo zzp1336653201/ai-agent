@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"sirenagent/internal/model"
 	"sirenagent/pkg/llm"
 )
 

@@ -255,7 +255,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			ToolName:   tc.ToolName,
 			DurationMs: tc.LatencyMs,
 			Success:    tc.Output != nil && tc.Output.Error == "",
-			Error:      toolErrString(tc.Output),
+			Error:      toolResultError(tc.Output),
 		})
 	}
 	trace.TurnCount = result.Turns
@@ -312,15 +312,12 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	return result, nil
 }
 
-// toolErrString 获取工具执行错误信息
-func toolErrString(tc *ToolCallRecord) string {
-	if tc == nil || tc.Output == nil {
+// toolResultError 获取工具执行错误信息
+func toolResultError(tr *ToolResult) string {
+	if tr == nil {
 		return ""
 	}
-	if tc.Output.Error != "" {
-		return tc.Output.Error
-	}
-	return ""
+	return tr.Error
 }
 
 // RunStream 流式执行 Agent
