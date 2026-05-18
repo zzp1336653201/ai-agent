@@ -12,7 +12,6 @@ import (
 )
 
 // ==================== 内置工具集 ====================
-// 这些工具展示了 Agent 能力边界，面试时重点讲解
 
 // WebSearchTool 网络搜索工具
 type WebSearchTool struct {
@@ -69,7 +68,6 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 		count = 20
 	}
 
-	// 尝试多个搜索后端，一个失败则自动切换
 	backends := []string{"duckduckgo", "bing_html", "baidu_html"}
 
 	var lastErr error
@@ -91,7 +89,6 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 	return NewToolResult(fmt.Sprintf("搜索失败: %v。请尝试使用其他工具，如 get_current_datetime（查时间）或 http_request（直接调用API）", lastErr)), nil
 }
 
-// searchBackend 在指定后端执行搜索
 func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query string, count int) (string, error) {
 	switch backend {
 	case "duckduckgo":
@@ -105,7 +102,6 @@ func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query
 	}
 }
 
-// searchDuckDuckGo 调用 DuckDuckGo Instant Answer API
 func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (string, error) {
 	searchURL := fmt.Sprintf(
 		"https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1",
@@ -115,7 +111,6 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (str
 	if err != nil {
 		return "", err
 	}
-
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SirenAgent/1.0)")
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -125,23 +120,21 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (str
 
 	body, _ := io.ReadAll(resp.Body)
 	var result struct {
-		Abstract     string   `json:"Abstract"`
-		AbstractText string   `json:"AbstractText"`
-		Heading      string   `json:"Heading"`
-		RelatedTopics []struct {
+		Abstract       string `json:"Abstract"`
+		AbstractText   string `json:"AbstractText"`
+		Heading        string `json:"Heading"`
+		RelatedTopics  []struct {
 			Text    string `json:"Text"`
 			FirstURL string `json:"FirstURL"`
 		} `json:"RelatedTopics"`
-		Answer        string `json:"Answer"`
-		AnswerType    string `json:"AnswerType"`
+		Answer     string `json:"Answer"`
+		AnswerType string `json:"AnswerType"`
 	}
 	json.Unmarshal(body, &result)
 
-	// 优先使用即时答案（适合时间、计算等精确查询）
 	if result.Answer != "" {
 		return fmt.Sprintf("[%s]\n%s", result.Heading, result.Answer), nil
 	}
-
 	content := result.AbstractText
 	if content == "" {
 		content = result.Abstract
@@ -155,20 +148,25 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (str
 	return content, nil
 }
 
-// searchBingHTML 通过 Bing 搜索（无需 API Key，解析 HTML）
-// 改进：使用正则提取 li.b_algo 结构，包含标题+URL+摘要
+// ==================== Bing 搜索解析 ====================
+
+// bingResult 用于 Bing/百度搜索结果的内部类型
+type bingResult struct {
+	title string
+	url   string
+	desc  string
+}
+
 func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count int) (string, error) {
 	searchURL := fmt.Sprintf(
-		"https://www.bing.com/search?q=%s&count=%d",
+		"https://www.bing.com/search?q=%s&count=%d&ensearch=0",
 		url.QueryEscape(query), count,
 	)
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return "", err
 	}
-
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 
 	resp, err := t.client.Do(req)
@@ -180,100 +178,32 @@ func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count 
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
 
-	// 解析 Bing 搜索结果：每个结果在 <li class="b_algo"> 内部
-	// <h2><a href="实际URL">标题</a></h2>
-	// <p>摘要文本</p>
-	// <cite>显示URL</cite>
-	type resultItem struct {
-		title string
-		url   string
-		desc  string
-	}
-	var results []resultItem
-
-	// 按 li.b_algo 切分
-	sections := strings.Split(html, `<li class="b_algo`)
-	for _, section := range sections[1:] { // 跳过第一个分割前的部分
-		item := resultItem{}
-
-		// 提取 <h2> 内部的 <a href="...">
-		h2End := strings.Index(section, "</h2>")
-		if h2End == -1 {
-			continue
-		}
-		h2Part := section[:h2End]
-
-		// 提取 href
-		hrefTag := `href="`
-		hrefStart := strings.Index(h2Part, hrefTag)
-		if hrefStart == -1 {
-			continue
-		}
-		hrefStart += len(hrefTag)
-		hrefEnd := strings.Index(h2Part[hrefStart:], `"`)
-		if hrefEnd == -1 {
-			continue
-		}
-		rawURL := h2Part[hrefStart : hrefStart+hrefEnd]
-		// 清理 Bing 追踪参数
-		rawURL = cleanBingURL(rawURL)
-
-		// 提取标题（a 标签之间的文本）
-		aEnd := strings.Index(h2Part, "</a>")
-		if aEnd == -1 {
-			continue
-		}
-		// 找 a 标签后的第一个 >
-		gtPos := 0
-		aTagStart := strings.Index(h2Part, "<a ")
-		if aTagStart != -1 {
-			gtPos = strings.Index(h2Part[aTagStart:], ">")
-			if gtPos != -1 {
-				gtPos += aTagStart + 1
-				title := strings.TrimSpace(h2Part[gtPos:aEnd])
-				title = stripHTMLTags(title)
-				if title == "" {
-					continue
-				}
-				// 去掉 "在新选项卡中打开链接" 等 Bing 插入的文本
-				title = cleanBingTitle(title)
-				item.title = title
-				item.url = rawURL
-			}
-		}
-
-		// 提取摘要 <p>...</p>
-		pStart := strings.Index(section, "<p>")
-		if pStart != -1 {
-			pStart += 3
-			pEnd := strings.Index(section[pStart:], "</p>")
-			if pEnd != -1 {
-				desc := stripHTMLTags(section[pStart : pStart+pEnd])
-				desc = strings.TrimSpace(desc)
-				// 去掉过长的多余文本
-				if len([]rune(desc)) > 200 {
-					desc = string([]rune(desc)[:200]) + "..."
-				}
-				item.desc = desc
-			}
-		}
-
-		if item.title != "" {
-			results = append(results, item)
+	var results []bingResult
+	classPatterns := []string{`class="b_algo"`, `class="b_caption"`, `class="b_algo_sr"`}
+	for _, cp := range classPatterns {
+		results = parseBingByClass(html, cp, count)
+		if len(results) > 0 {
+			break
 		}
 	}
-
 	if len(results) == 0 {
-		// 兜底：尝试提取任意 h2 > a 结构
+		results = parseBingByH2(html, count)
+	}
+	if len(results) == 0 {
+		results = parseBingByAnyLink(html, count)
+	}
+	if len(results) == 0 {
 		return "", fmt.Errorf("Bing 未返回可解析的结果")
 	}
 
-	// 限制数量
+	results = filterBingResults(results)
 	if len(results) > count {
 		results = results[:count]
 	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("Bing 没有返回有效搜索结果")
+	}
 
-	// 格式化输出
 	var parts []string
 	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
 	for i, r := range results {
@@ -283,178 +213,159 @@ func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count 
 		}
 		parts = append(parts, "")
 	}
-
 	return strings.Join(parts, "\n"), nil
 }
 
-// cleanBingURL 清理 Bing 搜索结果URL中的追踪参数
-func cleanBingURL(rawURL string) string {
-	// Bing 有时返回的 URL 是经过重定向的，提取实际URL
-	if strings.Contains(rawURL, "https://www.bing.com/ck/a") {
-		// 尝试从 URL 中提取 u 参数
-		uStart := strings.Index(rawURL, "?u=")
-		if uStart == -1 {
-			uStart = strings.Index(rawURL, "&u=")
-		}
-		if uStart != -1 {
-			uStart += 3
-			uEnd := strings.Index(rawURL[uStart:], "&")
-			if uEnd != -1 {
-				if decoded, err := url.QueryUnescape(rawURL[uStart : uStart+uEnd]); err == nil {
-					return decoded
-				}
-			}
-		}
-	}
-	return rawURL
-}
-
-// cleanBingTitle 清理 Bing 搜索结果标题中的多余文本
-func cleanBingTitle(title string) string {
-	// 去掉 "在新选项卡中打开链接"
-	removeTexts := []string{"在新选项卡中打开链接", "Open link in new tab"}
-	for _, t := range removeTexts {
-		title = strings.ReplaceAll(title, t, "")
-	}
-	return strings.TrimSpace(title)
-}
-
-// searchBaiduHTML 通过百度搜索（无需 API Key，解析 HTML）
-// 中文搜索效果好，适合国内技术问题
-func (t *WebSearchTool) searchBaiduHTML(ctx context.Context, query string, count int) (string, error) {
-	searchURL := fmt.Sprintf(
-		"https://www.baidu.com/s?wd=%s&rn=%d",
-		url.QueryEscape(query), count,
-	)
-	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
-
-	// 解析百度搜索结果：每个结果在 <div class="result c-container ..."> 内部
-	// <h3 class="t"><a href="url">标题</a></h3>
-	// <div class="c-abstract">摘要</div>
-	type resultItem struct {
-		title string
-		url   string
-		desc  string
-	}
-	var results []resultItem
-
-	sections := strings.Split(html, `class="result c-container`)
+func parseBingByClass(html, classPattern string, count int) []bingResult {
+	var results []bingResult
+	sections := strings.Split(html, classPattern)
 	for _, section := range sections[1:] {
-		item := resultItem{}
-
-		// 找 h3 class="t" 中的 <a>
-		tStart := strings.Index(section, `class="t"`)
-		if tStart == -1 {
-			continue
-		}
-		tagA := `<a `
-		aStart := strings.Index(section[tStart:], tagA)
-		if aStart == -1 {
-			continue
-		}
-		aStart += tStart
-
-		// 提取 href
-		hrefTag := `href="`
-		hrefStart := strings.Index(section[aStart:], hrefTag)
-		if hrefStart == -1 {
-			continue
-		}
-		hrefStart += aStart + len(hrefTag)
-		hrefEnd := strings.Index(section[hrefStart:], `"`)
-		if hrefEnd == -1 {
-			continue
-		}
-		item.url = section[hrefStart : hrefStart+hrefEnd]
-
-		// 提取标题
-		gtPos := strings.Index(section[aStart:], ">")
-		if gtPos == -1 {
-			continue
-		}
-		gtPos += aStart + 1
-		aClose := strings.Index(section[gtPos:], "</a>")
-		if aClose == -1 {
-			continue
-		}
-		title := stripHTMLTags(section[gtPos : gtPos+aClose])
-		title = strings.TrimSpace(title)
-		// 百度有时会加 <em> 标签标记关键词
-		if title == "" {
-			continue
-		}
-		item.title = title
-
-		// 提取摘要 c-abstract
-		// Baidu 新版用 span.content-right_1THTn 或 div.c-abstract
-		abstractPatterns := []string{`class="c-abstract"`, `class="content-right`}
-		for _, pattern := range abstractPatterns {
-			absStart := strings.Index(section, pattern)
-			if absStart == -1 {
-				continue
-			}
-			// 找到最近的 > 作为内容开始
-			gtStart := strings.Index(section[absStart:], ">")
-			if gtStart == -1 {
-				continue
-			}
-			absContentStart := absStart + gtStart + 1
-			// 找闭合标签
-			for _, closer := range []string{"</div>", "</span>"} {
-				absEnd := strings.Index(section[absContentStart:], closer)
-				if absEnd != -1 {
-					desc := stripHTMLTags(section[absContentStart : absContentStart+absEnd])
-					desc = strings.TrimSpace(desc)
-					if len([]rune(desc)) > 200 {
-						desc = string([]rune(desc)[:200]) + "..."
-					}
-					item.desc = desc
-					break
-				}
-			}
-			if item.desc != "" {
+		r := extractLinkFromSection(section)
+		if r != nil {
+			results = append(results, *r)
+			if len(results) >= count {
 				break
 			}
 		}
-
-		results = append(results, item)
 	}
+	return results
+}
 
-	if len(results) == 0 {
-		return "", fmt.Errorf("百度未返回可解析的结果")
-	}
-
-	if len(results) > count {
-		results = results[:count]
-	}
-
-	var parts []string
-	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
-	for i, r := range results {
-		parts = append(parts, fmt.Sprintf("%d. [%s](%s)", i+1, r.title, r.url))
-		if r.desc != "" {
-			parts = append(parts, fmt.Sprintf("   %s", r.desc))
+func parseBingByH2(html string, count int) []bingResult {
+	var results []bingResult
+	h2s := strings.Split(html, "<h2")
+	for _, h2 := range h2s[1:] {
+		h2End := strings.Index(h2, "</h2>")
+		if h2End == -1 {
+			continue
 		}
-		parts = append(parts, "")
+		r := extractLinkFromSection(h2[:h2End])
+		if r != nil {
+			results = append(results, *r)
+			if len(results) >= count {
+				break
+			}
+		}
+	}
+	return results
+}
+
+func parseBingByAnyLink(html string, count int) []bingResult {
+	var results []bingResult
+	seen := make(map[string]bool)
+	remaining := html
+	for {
+		aTag := `<a href="http`
+		idx := strings.Index(remaining, aTag)
+		if idx == -1 {
+			break
+		}
+		start := idx + len(aTag) - 4
+		end := strings.Index(remaining[start:], `"`)
+		if end == -1 {
+			break
+		}
+		u := remaining[start : start+end]
+		if strings.Contains(u, "bing.com") || strings.Contains(u, "microsoft.com") || seen[u] {
+			remaining = remaining[start+end:]
+			continue
+		}
+		seen[u] = true
+
+		before := remaining[:idx]
+		lastGT := strings.LastIndex(before, ">")
+		title := u
+		if lastGT != -1 && idx-lastGT < 200 {
+			candidate := strings.TrimSpace(stripHTMLTags(before[lastGT+1:]))
+			if len([]rune(candidate)) > 1 && len([]rune(candidate)) < 100 {
+				title = candidate
+			}
+		}
+		results = append(results, bingResult{title: title, url: u})
+		if len(results) >= count {
+			break
+		}
+		remaining = remaining[start+end:]
+	}
+	return results
+}
+
+func extractLinkFromSection(section string) *bingResult {
+	aHref := `<a href="`
+	hrefStart := strings.Index(section, aHref)
+	if hrefStart == -1 {
+		return nil
+	}
+	hrefStart += len(aHref)
+	if !strings.HasPrefix(section[hrefStart:], "http") {
+		return nil
+	}
+	hrefEnd := strings.Index(section[hrefStart:], `"`)
+	if hrefEnd == -1 {
+		return nil
+	}
+	rawURL := section[hrefStart : hrefStart+hrefEnd]
+
+	gtPos := strings.Index(section[hrefStart-50:hrefStart+200], ">")
+	if gtPos == -1 {
+		return nil
+	}
+	titleStart := hrefStart - 50 + gtPos + 1
+	aClose := strings.Index(section[titleStart:], "</a>")
+	if aClose == -1 {
+		return nil
+	}
+	title := strings.TrimSpace(stripHTMLTags(section[titleStart : titleStart+aClose]))
+	if title == "" || len([]rune(title)) > 150 {
+		return nil
 	}
 
-	return strings.Join(parts, "\n"), nil
+	desc := extractDescription(section)
+	return &bingResult{title: title, url: rawURL, desc: desc}
+}
+
+func extractDescription(section string) string {
+	searchArea := section
+	if len(searchArea) > 600 {
+		searchArea = searchArea[:600]
+	}
+	for _, delim := range []string{"<p>", "</p>", "<span>", "</span>"} {
+		s := strings.Index(searchArea, delim)
+		if s == -1 {
+			continue
+		}
+		s += len(delim)
+		e := strings.Index(searchArea[s:], "<")
+		if e == -1 || e > 300 {
+			continue
+		}
+		c := strings.TrimSpace(stripHTMLTags(searchArea[s : s+e]))
+		if len([]rune(c)) > 20 {
+			if len([]rune(c)) > 200 {
+				c = string([]rune(c)[:200]) + "..."
+			}
+			return c
+		}
+	}
+	return ""
+}
+
+func filterBingResults(results []bingResult) []bingResult {
+	noiseKeywords := []string{"在新选项卡中打开链接", "Open link in", "时间不限", "english", "deutsch"}
+	var filtered []bingResult
+	for _, r := range results {
+		noisy := false
+		for _, nk := range noiseKeywords {
+			if strings.Contains(r.title, nk) {
+				noisy = true
+				break
+			}
+		}
+		if !noisy && len([]rune(r.title)) > 1 {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 // stripHTMLTags 去除 HTML 标签，保留文本
@@ -474,7 +385,6 @@ func stripHTMLTags(s string) string {
 			result.WriteRune(c)
 		}
 	}
-	// 清理 HTML 实体
 	cleaned := result.String()
 	replacements := map[string]string{
 		"&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
@@ -483,9 +393,122 @@ func stripHTMLTags(s string) string {
 	for old, new := range replacements {
 		cleaned = strings.ReplaceAll(cleaned, old, new)
 	}
-	// 合并多余空格
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
 	return strings.TrimSpace(cleaned)
+}
+
+// ==================== 百度搜索 ====================
+
+func (t *WebSearchTool) searchBaiduHTML(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf(
+		"https://www.baidu.com/s?wd=%s&rn=%d",
+		url.QueryEscape(query), count,
+	)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	var results []bingResult
+
+	sections := strings.Split(html, `class="result c-container`)
+	for _, section := range sections[1:] {
+		tStart := strings.Index(section, `class="t"`)
+		if tStart == -1 {
+			continue
+		}
+		tagA := `<a `
+		aStart := strings.Index(section[tStart:], tagA)
+		if aStart == -1 {
+			continue
+		}
+		aStart += tStart
+
+		hrefTag := `href="`
+		hrefStart := strings.Index(section[aStart:], hrefTag)
+		if hrefStart == -1 {
+			continue
+		}
+		hrefStart += aStart + len(hrefTag)
+		hrefEnd := strings.Index(section[hrefStart:], `"`)
+		if hrefEnd == -1 {
+			continue
+		}
+		u := section[hrefStart : hrefStart+hrefEnd]
+
+		gtPos := strings.Index(section[aStart:], ">")
+		if gtPos == -1 {
+			continue
+		}
+		gtPos += aStart + 1
+		aClose := strings.Index(section[gtPos:], "</a>")
+		if aClose == -1 {
+			continue
+		}
+		title := strings.TrimSpace(stripHTMLTags(section[gtPos : gtPos+aClose]))
+		if title == "" {
+			continue
+		}
+
+		desc := extractBaiduDescription(section)
+		results = append(results, bingResult{title: title, url: u, desc: desc})
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("百度未返回可解析的结果")
+	}
+	if len(results) > count {
+		results = results[:count]
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("%d. [%s](%s)", i+1, r.title, r.url))
+		if r.desc != "" {
+			parts = append(parts, fmt.Sprintf("   %s", r.desc))
+		}
+		parts = append(parts, "")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+func extractBaiduDescription(section string) string {
+	patterns := []string{`class="c-abstract"`, `class="content-right`}
+	for _, pattern := range patterns {
+		absStart := strings.Index(section, pattern)
+		if absStart == -1 {
+			continue
+		}
+		gtStart := strings.Index(section[absStart:], ">")
+		if gtStart == -1 {
+			continue
+		}
+		contentStart := absStart + gtStart + 1
+		for _, closer := range []string{"</div>", "</span>"} {
+			absEnd := strings.Index(section[contentStart:], closer)
+			if absEnd != -1 {
+				desc := strings.TrimSpace(stripHTMLTags(section[contentStart : contentStart+absEnd]))
+				if len([]rune(desc)) > 200 {
+					desc = string([]rune(desc)[:200]) + "..."
+				}
+				return desc
+			}
+		}
+	}
+	return ""
 }
 
 // ==================== RAG 知识库检索工具 ====================
@@ -547,12 +570,10 @@ func (t *RAGSearchTool) Execute(ctx context.Context, params map[string]interface
 		topK = 10
 	}
 
-	// 确定集合名称 — 优先级：参数 > Context > 全局默认
 	collection := ""
 	if c, ok := params["collection"].(string); ok && c != "" {
 		collection = c
 	} else {
-		// 从 Context 读取当前 Agent 的知识库ID
 		if kbID, ok := ctx.Value(ContextKeyKnowledgeBaseID).(string); ok && kbID != "" {
 			collection = KnowledgeBaseCollection(kbID)
 		}
@@ -586,7 +607,7 @@ func (t *RAGSearchTool) Execute(ctx context.Context, params map[string]interface
 
 // SocialPublishTool 社交媒体内容发布工具
 type SocialPublishTool struct {
-	socialService SocialMediaService // 接口，实际对接各平台
+	socialService SocialMediaService
 }
 
 func NewSocialPublishTool(svc SocialMediaService) *SocialPublishTool {
@@ -595,7 +616,7 @@ func NewSocialPublishTool(svc SocialMediaService) *SocialPublishTool {
 
 func (t *SocialPublishTool) Name() string        { return "social_publish" }
 func (t *SocialPublishTool) Description() string {
-	return "⚠️ 高风险操作：将内容发布到社交媒体平台（抖音/小红书/视频号）。仅在用户明确要求发布时使用，且必须先获得用户确认。"
+	return "高风险操作：将内容发布到社交媒体平台（抖音/小红书/视频号）。仅在用户明确要求发布时使用，且必须先获得用户确认。"
 }
 func (t *SocialPublishTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -633,7 +654,6 @@ func (t *SocialPublishTool) Execute(ctx context.Context, params map[string]inter
 	content, _ := params["content"].(string)
 	title, _ := params["title"].(string)
 
-	// Poka-yoke: 平台名自动转小写去空格
 	platform = strings.TrimSpace(strings.ToLower(platform))
 	validPlatforms := map[string]bool{"douyin": true, "xiaohongshu": true, "video_channel": true}
 	if !validPlatforms[platform] {
@@ -656,7 +676,6 @@ func (t *SocialPublishTool) Execute(ctx context.Context, params map[string]inter
 		for _, tag := range rawTags {
 			if s, ok := tag.(string); ok {
 				s = strings.TrimSpace(s)
-				// Poka-yoke: 自动去掉用户可能误输入的 # 号
 				s = strings.TrimPrefix(s, "#")
 				if s != "" {
 					tags = append(tags, s)
@@ -685,7 +704,7 @@ func (t *SocialPublishTool) Execute(ctx context.Context, params map[string]inter
 
 // ==================== HTTP 请求工具 ====================
 
-// HTTPRequestTool 通用 HTTP 请求工具 — Agent 对接任意 Web API
+// HTTPRequestTool 通用 HTTP 请求工具
 type HTTPRequestTool struct {
 	client *http.Client
 }
@@ -711,17 +730,17 @@ func (t *HTTPRequestTool) Parameters() map[string]interface{} {
 			},
 			"method": map[string]interface{}{
 				"type":        "string",
-				"description": "HTTP 方法，默认 GET。查询用GET，创建用POST，更新用PUT，删除用DELETE",
+				"description": "HTTP 方法，默认 GET",
 				"enum":        []string{"GET", "POST", "PUT", "DELETE"},
 				"default":     "GET",
 			},
 			"headers": map[string]interface{}{
 				"type":        "object",
-				"description": "请求头键值对，如 {\"Authorization\": \"Bearer xxx\", \"Content-Type\": \"application/json\"}",
+				"description": "请求头键值对",
 			},
 			"body": map[string]interface{}{
 				"type":        "string",
-				"description": "请求体（仅POST/PUT时使用）。JSON格式请确保是合法的JSON字符串",
+				"description": "请求体（仅POST/PUT时使用）",
 			},
 		},
 		"required": []string{"url"},
@@ -731,10 +750,8 @@ func (t *HTTPRequestTool) Parameters() map[string]interface{} {
 func (t *HTTPRequestTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	rawURL, _ := params["url"].(string)
 	rawURL = strings.TrimSpace(rawURL)
-
-	// Poka-yoke: URL 校验
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return NewToolResult(fmt.Sprintf("请求失败：URL「%s」需要以 http:// 或 https:// 开头，请检查URL", rawURL)), nil
+		return NewToolResult(fmt.Sprintf("请求失败：URL「%s」需要以 http:// 或 https:// 开头", rawURL)), nil
 	}
 
 	method, _ := params["method"].(string)
@@ -742,19 +759,6 @@ func (t *HTTPRequestTool) Execute(ctx context.Context, params map[string]interfa
 		method = "GET"
 	}
 	method = strings.ToUpper(method)
-	validMethods := map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true}
-	if !validMethods[method] {
-		method = "GET"
-	}
-
-	headers := make(map[string]string)
-	if h, ok := params["headers"].(map[string]interface{}); ok {
-		for k, v := range h {
-			if s, ok := v.(string); ok {
-				headers[k] = s
-			}
-		}
-	}
 
 	var bodyReader io.Reader
 	if bodyStr, ok := params["body"].(string); ok && method != "GET" {
@@ -765,9 +769,12 @@ func (t *HTTPRequestTool) Execute(ctx context.Context, params map[string]interfa
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	if h, ok := params["headers"].(map[string]interface{}); ok {
+		for k, v := range h {
+			if s, ok := v.(string); ok {
+				req.Header.Set(k, s)
+			}
+		}
 	}
 
 	resp, err := t.client.Do(req)
@@ -777,20 +784,16 @@ func (t *HTTPRequestTool) Execute(ctx context.Context, params map[string]interfa
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-
 	result := map[string]interface{}{
 		"status_code": resp.StatusCode,
-		"headers":     resp.Header,
 		"body":        string(respBody),
 	}
 	resultJSON, _ := json.Marshal(result)
-
 	return NewToolResult(string(resultJSON)), nil
 }
 
 // ==================== 计算器工具 ====================
 
-// CalculatorTool 数学计算工具 — Agent 进行数值计算
 type CalculatorTool struct{}
 
 func NewCalculatorTool() *CalculatorTool { return &CalculatorTool{} }
@@ -810,8 +813,6 @@ func (t *CalculatorTool) Parameters() map[string]interface{} {
 		"required": []string{"expression"},
 	}
 }
-
-// CalculatorTool 的 Execute 实现省略，实际可接入 govaluate 库做表达式求值
 func (t *CalculatorTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	return &ToolResult{
 		Content: "计算功能待实现，请接入 govaluate 库",
@@ -820,7 +821,6 @@ func (t *CalculatorTool) Execute(ctx context.Context, params map[string]interfac
 
 // ==================== 文件读写工具 ====================
 
-// FileReadTool 文件读取工具 — Agent 处理本地文件
 type FileReadTool struct{}
 
 func NewFileReadTool() *FileReadTool { return &FileReadTool{} }
@@ -834,35 +834,24 @@ func (t *FileReadTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"path": map[string]interface{}{
 				"type":        "string",
-				"description": "文件路径，使用相对于项目的路径（如 config.yaml）或绝对路径。不要使用 ~ 开头的路径",
-			},
-			"encoding": map[string]interface{}{
-				"type":        "string",
-				"description": "文件编码，默认 utf-8。可选：utf-8, gbk, latin1",
-				"enum":        []string{"utf-8", "gbk", "latin1"},
-				"default":     "utf-8",
+				"description": "文件路径",
 			},
 		},
 		"required": []string{"path"},
 	}
 }
-
 func (t *FileReadTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	return &ToolResult{
-		Content: "文件读取功能待实现，请接入 os 包实现",
-	}, nil
+	return &ToolResult{Content: "文件读取功能待实现，请接入 os 包实现"}, nil
 }
 
-// ==================== 时间日期工具（本地无API依赖） ====================
+// ==================== 时间日期工具 ====================
 
-// GetCurrentDateTimeTool 获取当前时间日期 — 无需外部 API
 type GetCurrentDateTimeTool struct{}
 
 func NewGetCurrentDateTimeTool() *GetCurrentDateTimeTool { return &GetCurrentDateTimeTool{} }
-
 func (t *GetCurrentDateTimeTool) Name() string { return "get_current_datetime" }
 func (t *GetCurrentDateTimeTool) Description() string {
-	return "获取当前日期和时间。当用户询问「现在几点」「今天几号」「星期几」时使用。无需网络，即时返回。不能用于查询历史日期或未来日期。"
+	return "获取当前日期和时间。当用户询问「现在几点」「今天几号」「星期几」时使用。无需网络，即时返回。"
 }
 func (t *GetCurrentDateTimeTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -870,82 +859,61 @@ func (t *GetCurrentDateTimeTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"timezone": map[string]interface{}{
 				"type":        "string",
-				"description": "时区，默认 Asia/Shanghai（北京时间）。可选值：Asia/Shanghai, UTC, America/New_York",
+				"description": "时区，默认 Asia/Shanghai",
 				"enum":        []string{"Asia/Shanghai", "UTC", "America/New_York"},
 				"default":     "Asia/Shanghai",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
-				"description": "输出格式，默认 full。可选值：full（完整日期+时间）, date（仅日期）, time（仅时间）, weekday（仅星期几）",
+				"description": "输出格式，默认 full",
 				"enum":        []string{"full", "date", "time", "weekday"},
 				"default":     "full",
 			},
 		},
 	}
 }
-
 func (t *GetCurrentDateTimeTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	timezone := "Asia/Shanghai"
 	if tz, ok := params["timezone"].(string); ok && tz != "" {
 		timezone = tz
 	}
-
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		// 回退到 UTC
 		loc = time.UTC
 	}
-
 	now := time.Now().In(loc)
 	weekdayCN := [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
-	weekdayEN := [...]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
-
 	format, _ := params["format"].(string)
-	content := ""
-
+	var content string
 	switch format {
 	case "date":
 		content = now.Format("2006年01月02日")
 	case "time":
 		content = now.Format("15:04:05")
 	case "weekday":
-		content = fmt.Sprintf("%s（%s）", weekdayCN[now.Weekday()], weekdayEN[now.Weekday()])
+		content = weekdayCN[now.Weekday()]
 	default:
-		content = fmt.Sprintf(
-			"当前时间（%s）：%s %s %s",
-			timezone,
-			now.Format("2006年01月02日"),
-			weekdayCN[now.Weekday()],
-			now.Format("15:04:05"),
-		)
+		content = fmt.Sprintf("当前时间（%s）：%s %s %s", timezone,
+			now.Format("2006年01月02日"), weekdayCN[now.Weekday()], now.Format("15:04:05"))
 	}
-
 	return NewToolResult(content), nil
 }
 
 // ==================== 知识保存工具 ====================
 
-// KnowledgeSaveHandler 保存文档元数据的回调函数
 type KnowledgeSaveHandler func(ctx context.Context, title, content, category, agentID string) error
 
-// KnowledgeSaveTool 知识保存工具 - 让Agent可以在对话中自主保存信息到知识库向量数据库
 type KnowledgeSaveTool struct {
 	engine *AgentEngine
 	saver  KnowledgeSaveHandler
 }
 
 func NewKnowledgeSaveTool(engine *AgentEngine, saver KnowledgeSaveHandler) *KnowledgeSaveTool {
-	return &KnowledgeSaveTool{
-		engine: engine,
-		saver:  saver,
-	}
+	return &KnowledgeSaveTool{engine: engine, saver: saver}
 }
-
 func (t *KnowledgeSaveTool) Name() string { return "knowledge_save" }
 func (t *KnowledgeSaveTool) Description() string {
-	return "将有用的信息保存到知识库向量数据库中，供后续检索使用。" +
-		"当你从网页、搜索结果或其他来源获取到有价值的内容时，" +
-		"或者用户希望记住某些信息时使用。保存后下次检索知识库就能找到。"
+	return "将有用的信息保存到知识库向量数据库中，供后续检索使用。当你从网页、搜索结果或其他来源获取到有价值的内容时使用。"
 }
 func (t *KnowledgeSaveTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
@@ -953,33 +921,30 @@ func (t *KnowledgeSaveTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
 				"type":        "string",
-				"description": "知识标题，简短概括内容主题，建议10-30字",
-				"minLength":   2,
-				"maxLength":   200,
+				"description": "知识标题，简短概括内容主题",
+				"minLength":   2, "maxLength": 200,
 			},
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "知识正文内容，要保存的具体信息。建议整理成清晰的结构化文本，避免原始噪音",
-				"minLength":   10,
-				"maxLength":   50000,
+				"description": "知识正文内容",
+				"minLength":   10, "maxLength": 50000,
 			},
 			"category": map[string]interface{}{
-				"type":        "string",
-				"description": "知识分类，可选值：tech（技术）, product（产品）, faq（常见问题）, policy（政策）, manual（手册）, other（其他）",
-				"enum":        []string{"tech", "product", "faq", "policy", "manual", "other"},
-				"default":     "other",
+				"type":    "string",
+				"description": "知识分类",
+				"enum":    []string{"tech", "product", "faq", "policy", "manual", "other"},
+				"default": "other",
 			},
 			"tags": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "标签列表，方便分类检索，建议2-5个关键词",
-				"maxItems":    10,
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+				"description": "标签列表，方便分类检索",
+				"maxItems": 10,
 			},
 		},
 		"required": []string{"title", "content"},
 	}
 }
-
 func (t *KnowledgeSaveTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
 	title, _ := params["title"].(string)
 	content, _ := params["content"].(string)
@@ -987,12 +952,10 @@ func (t *KnowledgeSaveTool) Execute(ctx context.Context, params map[string]inter
 	if len([]rune(content)) < 10 {
 		return NewToolResult("保存失败：内容太短，最少需要10个字"), nil
 	}
-
 	category, _ := params["category"].(string)
 	if category == "" {
 		category = "other"
 	}
-
 	tags := make([]string, 0)
 	if rawTags, ok := params["tags"].([]interface{}); ok {
 		for _, tag := range rawTags {
@@ -1004,65 +967,41 @@ func (t *KnowledgeSaveTool) Execute(ctx context.Context, params map[string]inter
 			}
 		}
 	}
-
-	// 从 Context 获取当前 Agent ID（如果有）
 	agentID, _ := ctx.Value(ContextKeyKnowledgeBaseID).(string)
-
-	// 1. 简单分块（按段落/换行）
 	chunks := smartChunkContent(content)
-
-	// 2. 构建元数据
 	metadatas := make([]map[string]interface{}, len(chunks))
 	for i := range chunks {
 		metadatas[i] = map[string]interface{}{
-			"title":       title,
-			"chunk_index": i,
-			"type":        "agent_saved",
-			"category":    category,
-			"tags":        tags,
-			"agent_id":    agentID,
+			"title": title, "chunk_index": i, "type": "agent_saved",
+			"category": category, "tags": tags, "agent_id": agentID,
 		}
 	}
-
-	// 3. 确定向量集合
 	collection := KnowledgeBaseCollection(agentID)
-
-	// 4. 写入向量数据库
 	if t.engine.vectorDB != nil {
 		docID := fmt.Sprintf("save_%d", time.Now().UnixNano())
 		if err := t.engine.vectorDB.Insert(ctx, docID, chunks, metadatas, collection); err != nil {
 			return nil, fmt.Errorf("向量入库失败: %w", err)
 		}
-		fmt.Printf("[KnowledgeSave] 已保存: title=%q, chunks=%d, collection=%s\n", title, len(chunks), collection)
 	} else {
 		return NewToolResult("保存失败：向量数据库未初始化"), nil
 	}
-
-	// 5. 可选：保存文档元数据（如配置了 saver）
 	if t.saver != nil {
-		agentIDForMeta := agentID
-		if agentIDForMeta == "" {
-			agentIDForMeta = "agent_saved"
+		aID := agentID
+		if aID == "" {
+			aID = "agent_saved"
 		}
-		if err := t.saver(ctx, title, content, category, agentIDForMeta); err != nil {
+		if err := t.saver(ctx, title, content, category, aID); err != nil {
 			fmt.Printf("[KnowledgeSave] 文档元数据保存失败: %v\n", err)
 		}
 	}
-
-	tagStr := strings.Join(tags, ", ")
-	if tagStr != "" {
-		tagStr = "，标签: " + tagStr
-	}
-	return NewToolResult(fmt.Sprintf("✅ 知识已保存\n标题: %s\n分类: %s\n内容长度: %d字\n分块数: %d%s",
-		title, category, len([]rune(content)), len(chunks), tagStr)), nil
+	return NewToolResult(fmt.Sprintf("✅ 知识已保存\n标题: %s\n分类: %s\n内容长度: %d字\n分块数: %d",
+		title, category, len([]rune(content)), len(chunks))), nil
 }
 
-// smartChunkContent 简单按换行分段，每段不超过约500字
 func smartChunkContent(content string) []string {
 	paragraphs := strings.Split(content, "\n")
 	var chunks []string
 	var current strings.Builder
-
 	for _, p := range paragraphs {
 		p = strings.TrimSpace(p)
 		if p == "" {
@@ -1094,9 +1033,9 @@ type SocialMediaService interface {
 
 // PublishRequest 发布请求
 type PublishRequest struct {
-	Platform string   `json:"platform"`
-	Title    string   `json:"title"`
-	Content  string   `json:"content"`
-	Tags     []string `json:"tags"`
+	Platform  string   `json:"platform"`
+	Title     string   `json:"title"`
+	Content   string   `json:"content"`
+	Tags      []string `json:"tags"`
 	MediaURLs []string `json:"media_urls,omitempty"`
 }
