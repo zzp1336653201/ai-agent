@@ -68,7 +68,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 		count = 20
 	}
 
-	backends := []string{"duckduckgo", "duckduckgo_lite", "bing_html", "baidu_html"}
+	backends := []string{"duckduckgo", "duckduckgo_lite", "bing_html", "baidu_html", "bing_direct"}
 
 	var lastErr error
 	for _, backend := range backends {
@@ -86,7 +86,13 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 		fmt.Printf("[WebSearch] 后端 %s 搜索失败: %v，尝试下一个...\n", backend, err)
 	}
 
-	return NewToolResult(fmt.Sprintf("搜索失败: %v。请尝试使用其他工具，如 get_current_datetime（查时间）或 http_request（直接调用API）", lastErr)), nil
+	// 所有后端都失败时，返回提示让 Agent 尝试用 http_request 直接搜索
+	return NewToolResult(fmt.Sprintf(
+		"搜索失败(最后错误: %v)。\n请使用 http_request 工具直接搜索:\n"+
+			"- GET https://cn.bing.com/search?q=%s (国内可用)\n"+
+			"- GET https://www.baidu.com/s?wd=%s (百度)",
+		lastErr, url.QueryEscape(query), url.QueryEscape(query),
+	)), nil
 }
 
 func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query string, count int) (string, error) {
@@ -97,6 +103,8 @@ func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query
 		return t.searchDuckDuckGoLite(ctx, query, count)
 	case "bing_html":
 		return t.searchBingHTML(ctx, query, count)
+	case "bing_direct":
+		return t.searchBingDirect(ctx, query, count)
 	case "baidu_html":
 		return t.searchBaiduHTML(ctx, query, count)
 	default:
@@ -234,6 +242,50 @@ func (t *WebSearchTool) searchDuckDuckGoLite(ctx context.Context, query string, 
 			parts = append(parts, fmt.Sprintf("   %s", r.desc))
 		}
 		parts = append(parts, "")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// searchBingDirect 通过 HTTP 直连 cn.bing.com 获取搜索结果（最终兜底）
+func (t *WebSearchTool) searchBingDirect(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf("https://cn.bing.com/search?q=%s&count=%d",
+		url.QueryEscape(query), count)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	text := stripHTMLTags(string(body))
+
+	// 按行取出有意义的结果片段
+	var results []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if len([]rune(line)) < 15 || line == "" {
+			continue
+		}
+		results = append(results, line)
+	}
+	if len(results) > 50 {
+		results = results[:50]
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("未能从 Bing 搜索结果中提取文本")
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果：\n", query))
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("%d. %s", i+1, r))
 	}
 	return strings.Join(parts, "\n"), nil
 }
