@@ -264,3 +264,28 @@ type ToolDefinition struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// ==================== 测试记录相关 ====================
+
+// TestRecord 测试记录（用于前端测试面板）
+type TestRecord struct {
+	ID        string    `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	TestName  string    `json:"test_name" gorm:"type:varchar(100);not null"`
+	Category  string    `json:"category" gorm:"type:varchar(50)"`  // agent|document|chat|workflow|system
+	Status    string    `json:"status" gorm:"type:varchar(20)"`    // success|failed|running
+	Request   string    `json:"request" gorm:"type:jsonb"`         // 请求内容 JSON
+	Response  string    `json:"response" gorm:"type:jsonb"`        // 返回内容 JSON
+	Duration  int64     `json:"duration"`                          // 耗时(ms)
+	ErrorMsg  string    `json:"error_msg" gorm:"type:text"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func NewTestRecord(testName, category string) *TestRecord {
+	return &TestRecord{
+		ID:        uuid.New().String(),
+		TestName:  testName,
+		Category:  category,
+		Status:    "running",
+		CreatedAt: time.Now(),
+	}
+}

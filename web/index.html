@@ -473,6 +473,7 @@
                 <button class="nav-tab" data-tab="agents">🤖 智能体</button>
                 <button class="nav-tab" data-tab="knowledge">📚 知识库</button>
                 <button class="nav-tab" data-tab="workflows">🔄 工作流</button>
+                <button class="nav-tab" data-tab="tests">🧪 测试</button>
             </nav>
         </div>
     </header>
@@ -584,6 +585,57 @@
                 </div>
             </div>
         </div>
+
+        <!-- Test Panel -->
+        <div id="panel-tests" class="panel">
+            <div class="card">
+                <div class="card-title">🧪 测试中心</div>
+                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                    <button class="btn btn-primary" onclick="runAllTests()">▶ 一键运行所有测试</button>
+                    <button class="btn" style="color: #ef4444;" onclick="clearAllTests()">🗑 清空记录</button>
+                    <span id="test-summary" style="color: var(--text-muted); font-size: 0.875rem;"></span>
+                </div>
+            </div>
+
+            <!-- Test Stats -->
+            <div class="card" id="test-stats-card" style="display:none;">
+                <div class="card-title">📊 测试统计</div>
+                <div id="test-stats" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem;"></div>
+            </div>
+
+            <!-- Test Cases -->
+            <div class="card">
+                <div class="card-title">📋 测试用例</div>
+                <div id="test-cases" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem;">
+                    <div class="loading"><div class="spinner"></div>加载测试用例...</div>
+                </div>
+            </div>
+
+            <!-- Test History -->
+            <div class="card">
+                <div class="card-title">
+                    📝 测试历史记录
+                    <span style="margin-left: auto; font-size: 0.8rem; color: var(--text-muted);" id="test-history-count"></span>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>测试名称</th>
+                                <th>分类</th>
+                                <th>状态</th>
+                                <th>耗时</th>
+                                <th>时间</th>
+                                <th>详情</th>
+                            </tr>
+                        </thead>
+                        <tbody id="test-history">
+                            <tr><td colspan="6" class="loading"><div class="spinner"></div>加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- Status Bar -->
@@ -662,6 +714,7 @@
                 if (tab.dataset.tab === 'agents') loadAgents();
                 if (tab.dataset.tab === 'knowledge') loadDocuments();
                 if (tab.dataset.tab === 'workflows') loadWorkflows();
+                if (tab.dataset.tab === 'tests') loadTestPanel();
             });
         });
         
@@ -1104,6 +1157,262 @@ function addFileUploadMessage(filename, docId) {
                 loadWorkflows();
             } catch (error) {
                 showToast('执行失败: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== Test Functions ====================
+        // 测试用例定义
+        const TEST_CASES = [
+            { name: '健康检查', category: 'system', color: '#22c55e', icon: '🏥', endpoint: '/health', method: 'GET', body: null, desc: '检测 API 服务是否正常运行' },
+            { name: '创建智能体', category: 'agent', color: '#6366f1', icon: '🤖', endpoint: '/agents', method: 'POST', body: { name: '测试助手', description: '自动创建的测试智能体', system_prompt: '你是一个友好的助手' }, desc: '测试智能体创建和数据库写入' },
+            { name: '列出智能体', category: 'agent', color: '#6366f1', icon: '📋', endpoint: '/agents', method: 'GET', body: null, desc: '测试智能体列表查询和数据库读取' },
+            { name: '上传文档', category: 'document', color: '#f59e0b', icon: '📄', endpoint: '/documents', method: 'POST', body: { title: '测试文档', content: '这是自动创建的测试文档内容，用于验证文档上传和向量化流程。', type: 'txt' }, desc: '测试文档上传、分块和向量入库' },
+            { name: '列出文档', category: 'document', color: '#f59e0b', icon: '📚', endpoint: '/documents', method: 'GET', body: null, desc: '测试文档列表查询' },
+            { name: 'RAG 查询', category: 'chat', color: '#ec4899', icon: '💬', endpoint: '/query', method: 'POST', body: { query: '测试文档说了什么？', top_k: 3 }, desc: '测试 RAG 检索问答流程（需要先有文档）' },
+            { name: '创建工作流', category: 'workflow', color: '#06b6d4', icon: '🔄', endpoint: '/workflows', method: 'POST', body: { name: '测试工作流', description: '自动创建的测试工作流' }, desc: '测试工作流创建和数据库写入' },
+            { name: '列出工作流', category: 'workflow', color: '#06b6d4', icon: '📋', endpoint: '/workflows', method: 'GET', body: null, desc: '测试工作流列表查询' },
+        ];
+
+        // 加载测试面板
+        async function loadTestPanel() {
+            await Promise.all([
+                loadTestStats(),
+                loadTestHistory(),
+                renderTestCases()
+            ]);
+        }
+
+        // 渲染测试用例卡片
+        function renderTestCases() {
+            const container = document.getElementById('test-cases');
+            container.innerHTML = TEST_CASES.map(tc => `
+                <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                        <div>
+                            <span style="font-size: 1.1rem; font-weight: 600;">${tc.icon} ${tc.name}</span>
+                            <span class="badge" style="background: ${tc.color}33; color: ${tc.color}; margin-left: 0.5rem;">${tc.category}</span>
+                        </div>
+                        <button class="btn btn-primary" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" 
+                            onclick="runSingleTest('${tc.name}')">▶ 运行</button>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem;">
+                        <code>${tc.method} ${tc.endpoint}</code>
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">${tc.desc}</div>
+                    <div id="test-result-${tc.name}" style="margin-top: 0.5rem;"></div>
+                </div>
+            `).join('');
+        }
+
+        // 运行单个测试
+        async function runSingleTest(testName) {
+            const tc = TEST_CASES.find(t => t.name === testName);
+            if (!tc) return;
+            
+            const resultEl = document.getElementById(`test-result-${testName}`);
+            resultEl.innerHTML = '<span style="color: var(--text-muted);"><div class="spinner" style="display:inline-block;width:12px;height:12px;margin-right:0.3rem;"></div>运行中...</span>';
+            
+            const startTime = Date.now();
+            try {
+                const options = { method: tc.method };
+                if (tc.body) {
+                    options.body = JSON.stringify(tc.body);
+                    options.headers = { 'Content-Type': 'application/json' };
+                }
+                const resp = await fetch(`${API_BASE}${tc.endpoint}`, options);
+                const data = await resp.json();
+                const duration = Date.now() - startTime;
+                
+                if (resp.ok) {
+                    resultEl.innerHTML = `<span style="color: #22c55e;">✅ 通过 (${duration}ms)</span>`;
+                    await saveTestResult(testName, tc.category, 'success', JSON.stringify(tc.body), JSON.stringify(data).slice(0, 500), duration, '');
+                } else {
+                    resultEl.innerHTML = `<span style="color: #ef4444;">❌ 失败 (${duration}ms): ${data.error || resp.statusText}</span>`;
+                    await saveTestResult(testName, tc.category, 'failed', JSON.stringify(tc.body), JSON.stringify(data).slice(0, 500), duration, data.error || resp.statusText);
+                }
+            } catch (error) {
+                const duration = Date.now() - startTime;
+                resultEl.innerHTML = `<span style="color: #ef4444;">❌ 异常: ${error.message}</span>`;
+                await saveTestResult(testName, tc.category, 'failed', JSON.stringify(tc.body), '', duration, error.message);
+            }
+            
+            loadTestStats();
+            loadTestHistory();
+        }
+
+        // 一键运行所有测试
+        async function runAllTests() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ 运行中...';
+            
+            for (const tc of TEST_CASES) {
+                await runSingleTest(tc.name);
+                await new Promise(r => setTimeout(r, 300)); // 间隔避免并发问题
+            }
+            
+            btn.disabled = false;
+            btn.textContent = '▶ 一键运行所有测试';
+            showToast('✅ 全部测试完成！');
+        }
+
+        // 保存测试记录到数据库
+        async function saveTestResult(testName, category, status, request, response, duration, errorMsg) {
+            try {
+                await fetch(`${API_BASE}/tests`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        test_name: testName,
+                        category: category,
+                        status: status,
+                        request: request || '',
+                        response: response || '',
+                        duration: duration,
+                        error_msg: errorMsg
+                    })
+                });
+            } catch (e) {
+                console.error('保存测试记录失败:', e);
+            }
+        }
+
+        // 加载测试统计
+        async function loadTestStats() {
+            const card = document.getElementById('test-stats-card');
+            try {
+                const resp = await fetch(`${API_BASE}/tests/stats`);
+                const result = await resp.json();
+                const data = result.data || [];
+                
+                if (data.length === 0) {
+                    card.style.display = 'none';
+                    document.getElementById('test-summary').textContent = '暂无测试记录';
+                    return;
+                }
+                
+                card.style.display = 'block';
+                const container = document.getElementById('test-stats');
+                
+                const total = data.reduce((s, d) => s + parseInt(d.total), 0);
+                const success = data.reduce((s, d) => s + parseInt(d.success), 0);
+                const failed = data.reduce((s, d) => s + parseInt(d.failed), 0);
+                
+                // Overall stats
+                container.innerHTML = `
+                    <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: ${failed > 0 ? '#ef4444' : '#22c55e'};">${total}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">总运行次数</div>
+                    </div>
+                    <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #22c55e;">${success}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">通过</div>
+                    </div>
+                    <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #ef4444;">${failed}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">失败</div>
+                    </div>
+                    <div style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #6366f1;">${Math.round(total > 0 ? (success / total * 100) : 0)}%</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">通过率</div>
+                    </div>
+                `;
+                
+                document.getElementById('test-summary').textContent = `📊 共 ${total} 次测试 · ✅ ${success} 通过 · ❌ ${failed} 失败 · ${Math.round(success/total*100)}% 通过率`;
+            } catch (e) {
+                card.style.display = 'none';
+            }
+        }
+
+        // 加载测试历史
+        async function loadTestHistory() {
+            try {
+                const resp = await fetch(`${API_BASE}/tests?page=1&size=50`);
+                const result = await resp.json();
+                const records = result.data || [];
+                
+                document.getElementById('test-history-count').textContent = records.length > 0 ? `共 ${result.total} 条` : '';
+                
+                const tbody = document.getElementById('test-history');
+                if (records.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">暂无测试记录</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = records.map(r => `
+                    <tr>
+                        <td>${r.test_name}</td>
+                        <td><span class="badge" style="background: ${getCategoryColor(r.category)}33; color: ${getCategoryColor(r.category)};">${r.category}</span></td>
+                        <td><span class="badge ${r.status === 'success' ? 'badge-success' : 'badge-error'}">${r.status === 'success' ? '✅ 通过' : '❌ 失败'}</span></td>
+                        <td>${r.duration}ms</td>
+                        <td style="font-size: 0.8rem; color: var(--text-muted);">${new Date(r.created_at).toLocaleString()}</td>
+                        <td><button class="btn" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="showTestDetail('${r.id}')">查看</button></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                document.getElementById('test-history').innerHTML = `<tr><td colspan="6" style="color: #ef4444;">加载失败: ${e.message}</td></tr>`;
+            }
+        }
+
+        function getCategoryColor(cat) {
+            const colors = { system: '#22c55e', agent: '#6366f1', document: '#f59e0b', chat: '#ec4899', workflow: '#06b6d4' };
+            return colors[cat] || '#94a3b8';
+        }
+
+        // 查看测试详情（弹窗）
+        async function showTestDetail(id) {
+            const resp = await fetch(`${API_BASE}/tests`);
+            const result = await resp.json();
+            const records = result.data || [];
+            const record = records.find(r => r.id === id);
+            if (!record) return;
+            
+            document.getElementById('modal').style.display = 'flex';
+            document.getElementById('modal-title').textContent = `📝 ${record.test_name}`;
+            document.getElementById('modal-content').innerHTML = `
+                <div style="margin-bottom: 1rem;">
+                    <span class="badge" style="background: ${getCategoryColor(record.category)}33; color: ${getCategoryColor(record.category)};">${record.category}</span>
+                    <span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-error'}">${record.status === 'success' ? '通过' : '失败'}</span>
+                    <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.5rem;">⏱ ${record.duration}ms</span>
+                </div>
+                <div style="margin-bottom: 0.5rem; font-weight: 500;">📤 请求</div>
+                <pre style="background: var(--bg-dark); padding: 0.75rem; border-radius: 0.5rem; font-size: 0.8rem; overflow-x: auto; max-height: 200px; white-space: pre-wrap;">${syntaxHighlight(record.request || '{}')}</pre>
+                <div style="margin: 1rem 0 0.5rem; font-weight: 500;">📥 响应</div>
+                <pre style="background: var(--bg-dark); padding: 0.75rem; border-radius: 0.5rem; font-size: 0.8rem; overflow-x: auto; max-height: 300px; white-space: pre-wrap;">${syntaxHighlight(record.response || '{}')}</pre>
+                ${record.error_msg ? `<div style="margin: 1rem 0 0.5rem; font-weight: 500; color: #ef4444;">❌ 错误信息</div>
+                    <pre style="background: #1a1a1a; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.8rem; color: #ef4444; white-space: pre-wrap;">${record.error_msg}</pre>` : ''}
+                <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+                    <button class="btn" onclick="document.getElementById('modal').style.display='none'">关闭</button>
+                </div>
+            `;
+        }
+
+        // 简单 JSON 语法高亮
+        function syntaxHighlight(json) {
+            try {
+                const obj = typeof json === 'string' ? JSON.parse(json) : json;
+                const pretty = JSON.stringify(obj, null, 2);
+                return pretty.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"([^"]+)":/g, '<span style="color: #60a5fa;">"$1"</span>:')
+                    .replace(/: "([^"]+)"/g, ': <span style="color: #34d399;">"$1"</span>')
+                    .replace(/: (\d+)/g, ': <span style="color: #fbbf24;">$1</span>')
+                    .replace(/: (true|false)/g, ': <span style="color: #f472b6;">$1</span>')
+                    .replace(/: (null)/g, ': <span style="color: #94a3b8;">$1</span>');
+            } catch {
+                return json || '';
+            }
+        }
+
+        // 清空测试记录
+        async function clearAllTests() {
+            if (!confirm('确定要清空所有测试记录吗？')) return;
+            try {
+                await fetch(`${API_BASE}/tests`, { method: 'DELETE' });
+                showToast('已清空所有测试记录');
+                loadTestStats();
+                loadTestHistory();
+            } catch (e) {
+                showToast('清空失败: ' + e.message, 'error');
             }
         }
         

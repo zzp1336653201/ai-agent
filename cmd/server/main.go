@@ -144,6 +144,7 @@ func main() {
 	docHandler := handler.NewDocumentHandler(docSvc)
 	queryHandler := handler.NewQueryHandler(ragSvc)
 	traceHandler := handler.NewTraceHandler()
+	testHandler := handler.NewTestHandler(db)
 
 	// 14. 启动 HTTP 服务
 	gin.SetMode(gin.ReleaseMode)
@@ -162,7 +163,7 @@ func main() {
 		c.File("./web/index.html")
 	})
 
-	router.RegisterRoutes(r, agentHandler, workflowHandler, docHandler, queryHandler, traceHandler)
+	router.RegisterRoutes(r, agentHandler, workflowHandler, docHandler, queryHandler, traceHandler, testHandler)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	go func() {

@@ -15,6 +15,7 @@ func RegisterRoutes(
 	docHandler *handler.DocumentHandler,
 	queryHandler *handler.QueryHandler,
 	traceHandler *handler.TraceHandler,
+	testHandler *handler.TestHandler,
 ) {
 	api := r.Group("/api/v1")
 	{
@@ -57,6 +58,17 @@ func RegisterRoutes(
 		{
 			traces.GET("", traceHandler.List)       // 列出追踪记录
 			traces.GET("/:id", traceHandler.Get)    // 查看单条追踪详情
+		}
+
+		// ========== 测试记录 ==========
+		tests := api.Group("/tests")
+		{
+			tests.POST("", testHandler.SaveRecord)              // 保存测试记录
+			tests.GET("", testHandler.ListRecords)               // 列出测试记录
+			tests.DELETE("/:id", testHandler.DeleteRecord)       // 删除单条记录
+			tests.DELETE("", testHandler.DeleteAllRecords)       // 清空全部记录
+			tests.GET("/stats", testHandler.GetTestStats)        // 测试统计
+			tests.POST("/run-all", testHandler.RunAllTests)      // 获取测试用例列表
 		}
 
 		// ========== 健康检查 ==========
