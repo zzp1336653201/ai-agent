@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -135,6 +136,54 @@ func main() {
 	agentSvc := service.NewAgentService(agentEngine, agentRepo)
 	workflowSvc := service.NewWorkflowService(workflowEngine, workflowRepo)
 	docSvc := service.NewDocumentService(docRepo, vectorDB)
+
+	// 注入异步知识获取功能：创建智能体时后台自动搜索相关文档入库
+	agentSvc.SetKnowledgeFetcher(func(ctx context.Context, agentID, systemPrompt, description string) {
+		start := time.Now()
+		webTool, ok := agentEngine.GetTool("web_search")
+		if !ok {
+			fmt.Printf("[AutoFetch] web_search 工具未注册，跳过\n")
+			return
+		}
+
+		// 从 SystemPrompt 和 Description 中提取关键词
+		keywords := extractKeywords(systemPrompt, description)
+		fmt.Printf("[AutoFetch] 提取关键词: %v\n", keywords)
+
+		for _, keyword := range keywords {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			fmt.Printf("[AutoFetch] 搜索关键词: %s\n", keyword)
+			result, err := webTool.Execute(ctx, map[string]interface{}{
+				"query": keyword,
+				"count": float64(3),
+			})
+			if err != nil {
+				fmt.Printf("[AutoFetch] 搜索失败 %q: %v\n", keyword, err)
+				continue
+			}
+
+			// 将搜索结果保存到 Agent 专属知识库
+			title := fmt.Sprintf("自动获取 - %s", keyword)
+			_, uploadErr := docSvc.Upload(ctx, &service.UploadRequest{
+				Title:    title,
+				Content:  fmt.Sprintf("关于「%s」的搜索结果：\n%s", keyword, result.Content),
+				Type:     "txt",
+				Category: "tech",
+				AgentID:  agentID,
+			})
+			if uploadErr != nil {
+				fmt.Printf("[AutoFetch] 上传失败 %q: %v\n", keyword, uploadErr)
+			} else {
+				fmt.Printf("[AutoFetch] ✅ 已保存: %s\n", title)
+			}
+		}
+		fmt.Printf("[AutoFetch] 知识预热完成，耗时: %v\n", time.Since(start))
+	})
 	ragSvc := service.NewRAGService(llmProvider, vectorDB, memoryMgr, cfg.LLM.Model)
 	ragSvc.SetAgentEngine(agentEngine)
 
@@ -330,6 +379,77 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// extractKeywords 从 SystemPrompt 和 Description 中提取搜索关键词
+func extractKeywords(systemPrompt, description string) []string {
+	// 收集所有可能的文本来源
+	texts := []string{systemPrompt, description}
+	var allText string
+	for _, t := range texts {
+		allText += " " + t
+	}
+
+	// 去掉标点符号和常见停用词
+	stopWords := map[string]bool{
+		"你": true, "我": true, "的": true, "了": true, "是": true, "在": true,
+		"有": true, "和": true, "就": true, "不": true, "人": true, "都": true,
+		"一": true, "个": true, "上": true, "也": true, "很": true, "到": true,
+		"说": true, "要": true, "去": true, "会": true, "着": true,
+		"没有": true, "看": true, "好": true, "自己": true, "这": true,
+		"一个": true, "可以": true, "我们": true, "大家": true, "什么": true,
+		"a": true, "an": true, "the": true, "is": true, "are": true, "to": true,
+		"of": true, "in": true, "it": true, "that": true, "for": true, "on": true,
+	}
+
+	// 提取有意义的中文词组（2-6字）和英文单词
+	seen := make(map[string]bool)
+	var keywords []string
+
+	// 提取中文词组
+	runes := []rune(allText)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] > 0x4e00 && runes[i] < 0x9fff { // 中文字符范围
+			for length := 4; length >= 2; length-- {
+				if i+length <= len(runes) {
+					word := string(runes[i : i+length])
+					if !stopWords[word] && !seen[word] && len([]rune(word)) >= 2 {
+						seen[word] = true
+						keywords = append(keywords, word)
+					}
+				}
+			}
+		}
+	}
+
+	// 提取英文单词（至少3个字母）
+	current := ""
+	for _, r := range allText {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			current += string(r)
+		} else {
+			if len(current) >= 3 {
+				lower := strings.ToLower(current)
+				if !stopWords[lower] && !seen[lower] {
+					seen[lower] = true
+					keywords = append(keywords, current)
+				}
+			}
+			current = ""
+		}
+	}
+
+	// 去重并限制最多5个关键词
+	if len(keywords) > 5 {
+		keywords = keywords[:5]
+	}
+
+	// 如果提取不到关键词，用 description 作为默认搜索
+	if len(keywords) == 0 && description != "" {
+		keywords = append(keywords, description)
+	}
+
+	return keywords
 }
 
 func registerPromptTemplates(pm *core.TemplatePromptManager) {

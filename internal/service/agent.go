@@ -10,10 +10,15 @@ import (
 	"sirenagent/pkg/llm"
 )
 
+// KnowledgeFetcher 异步获取知识的回调函数
+// 在创建智能体时，如果开启 auto_fetch，后台自动搜索相关文档入库
+type KnowledgeFetcher func(ctx context.Context, agentID, systemPrompt, description string)
+
 // AgentService 智能体管理服务
 type AgentService struct {
-	engine    *core.AgentEngine
-	repo      AgentRepository
+	engine      *core.AgentEngine
+	repo        AgentRepository
+	fetchKnowledge KnowledgeFetcher // 可选：异步知识获取
 }
 
 type AgentRepository interface {
@@ -26,6 +31,11 @@ type AgentRepository interface {
 
 func NewAgentService(engine *core.AgentEngine, repo AgentRepository) *AgentService {
 	return &AgentService{engine: engine, repo: repo}
+}
+
+// SetKnowledgeFetcher 设置异步知识获取回调（main.go 中注入）
+func (s *AgentService) SetKnowledgeFetcher(fetch KnowledgeFetcher) {
+	s.fetchKnowledge = fetch
 }
 
 // ChatRequest 对话请求
@@ -73,6 +83,13 @@ func (s *AgentService) Create(req *CreateAgentRequest) (*model.Agent, error) {
 	}
 	fmt.Printf("[AgentService] 创建智能体: %s (ID=%s, 知识库=%s, 集合=%s)\n",
 		agent.Name, agent.ID, agent.KnowledgeBaseID, collectionName)
+
+	// 如果开启自动获取知识，后台异步执行
+	if req.AutoFetchKnowledge && s.fetchKnowledge != nil {
+		fmt.Printf("[AgentService] ⏳ 正在后台自动获取相关知识...\n")
+		go s.fetchKnowledge(context.Background(), agent.ID, agent.SystemPrompt, agent.Description)
+	}
+
 	return agent, nil
 }
 
@@ -169,15 +186,16 @@ func (s *AgentService) Update(id string, req *UpdateAgentRequest) (*model.Agent,
 // ==================== 请求/响应类型 ====================
 
 type CreateAgentRequest struct {
-	Name           string   `json:"name" binding:"required"`
-	Description    string   `json:"description"`
-	SystemPrompt   string   `json:"system_prompt" binding:"required"`
-	Model          string   `json:"model"`
-	Temperature    float64  `json:"temperature"`
-	MaxTokens      int      `json:"max_tokens"`
-	MemoryType     string   `json:"memory_type"`
-	Tools          []string `json:"tools"`
-	KnowledgeBaseID string `json:"knowledge_base_id"` // 不传则自动生成
+	Name               string   `json:"name" binding:"required"`
+	Description        string   `json:"description"`
+	SystemPrompt       string   `json:"system_prompt" binding:"required"`
+	Model              string   `json:"model"`
+	Temperature        float64  `json:"temperature"`
+	MaxTokens          int      `json:"max_tokens"`
+	MemoryType         string   `json:"memory_type"`
+	Tools              []string `json:"tools"`
+	KnowledgeBaseID    string   `json:"knowledge_base_id"`   // 不传则自动生成
+	AutoFetchKnowledge  bool    `json:"auto_fetch_knowledge"` // 是否自动获取相关知识
 }
 
 type UpdateAgentRequest struct {

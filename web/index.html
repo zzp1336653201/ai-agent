@@ -947,6 +947,15 @@ function addFileUploadMessage(filename, docId) {
                     <label class="form-label">角色设定 <span style="color:#ef4444;">*</span></label>
                     <textarea class="form-textarea" id="agent-prompt" placeholder="输入System Prompt" style="min-height:80px;">你是一个专业、友好的智能助手，擅长解答问题、搜索信息、处理文档。</textarea>
                 </div>
+                <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:0.5rem;">
+                        <input type="checkbox" id="agent-auto-fetch" checked>
+                        <span>🤖 自动获取相关知识</span>
+                    </label>
+                    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.3rem;">
+                        创建后自动搜索相关文档并写入知识库，让智能体开箱即用
+                    </div>
+                </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
                     <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
                     <button class="btn btn-primary" onclick="createAgent()">创建</button>
@@ -969,11 +978,17 @@ function addFileUploadMessage(filename, docId) {
             }
             
             try {
+                const autoFetch = document.getElementById('agent-auto-fetch').checked;
                 await apiCall('/agents', {
                     method: 'POST',
-                    body: JSON.stringify({ name, description, system_prompt: systemPrompt })
+                    body: JSON.stringify({ 
+                        name, 
+                        description, 
+                        system_prompt: systemPrompt,
+                        auto_fetch_knowledge: autoFetch
+                    })
                 });
-                showToast('创建成功！');
+                showToast(autoFetch ? '✅ 创建成功！后台正在获取相关知识...' : '创建成功！');
                 document.getElementById('modal').style.display = 'none';
                 loadAgents();
             } catch (error) {
