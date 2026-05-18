@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"sirenagent/internal/core"
@@ -24,6 +25,11 @@ type WorkflowRepository interface {
 	SaveExecution(exec *model.WorkflowExecution) error
 	UpdateExecution(exec *model.WorkflowExecution) error
 	ListExecutions(workflowID string, status string, page, size int) ([]*model.WorkflowExecution, int64, error)
+	// 节点/边管理
+	SaveNodes(workflowID string, nodes []*model.WorkflowNode) error
+	SaveEdges(workflowID string, edges []*model.WorkflowEdge) error
+	GetNodes(workflowID string) ([]*model.WorkflowNode, error)
+	GetEdges(workflowID string) ([]*model.WorkflowEdge, error)
 }
 
 func NewWorkflowService(engine *core.WorkflowEngine, repo WorkflowRepository) *WorkflowService {
@@ -66,7 +72,48 @@ func (s *WorkflowService) Create(req *CreateWorkflowRequest) (*model.Workflow, e
 		return nil, fmt.Errorf("创建工作流失败: %w", err)
 	}
 
-	// TODO: 保存节点和边到数据库
+	// 保存节点
+	if len(req.Nodes) > 0 {
+		nodes := make([]*model.WorkflowNode, 0, len(req.Nodes))
+		for i, nd := range req.Nodes {
+			configJSON := "{}"
+			if nd.Config != nil {
+				cfgBytes, err := json.Marshal(nd.Config)
+				if err == nil {
+					configJSON = string(cfgBytes)
+				}
+			}
+			nodes = append(nodes, &model.WorkflowNode{
+				ID:         nd.ID,
+				WorkflowID: wf.ID,
+				NodeType:   nd.Type,
+				Name:       nd.Name,
+				Config:     configJSON,
+				PositionX:  nd.X,
+				PositionY:  nd.Y,
+				SortOrder:  i,
+			})
+		}
+		if err := s.repo.SaveNodes(wf.ID, nodes); err != nil {
+			return nil, fmt.Errorf("保存工作流节点失败: %w", err)
+		}
+	}
+
+	// 保存边
+	if len(req.Edges) > 0 {
+		edges := make([]*model.WorkflowEdge, 0, len(req.Edges))
+		for _, ed := range req.Edges {
+			edges = append(edges, &model.WorkflowEdge{
+				WorkflowID: wf.ID,
+				SourceID:   ed.Source,
+				TargetID:   ed.Target,
+				Condition:  ed.Condition,
+			})
+		}
+		if err := s.repo.SaveEdges(wf.ID, edges); err != nil {
+			return nil, fmt.Errorf("保存工作流边失败: %w", err)
+		}
+	}
 
 	return wf, nil
 }

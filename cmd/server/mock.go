@@ -51,7 +51,10 @@ func (r *MockDocumentRepository) ListByCategory(category string, page, size int)
 }
 func (r *MockDocumentRepository) Delete(id string) error                    { return nil }
 
-// 确保实现了 service 接口
+func (r *MockWorkflowRepository) SaveNodes(workflowID string, nodes []*model.WorkflowNode) error { return nil }
+func (r *MockWorkflowRepository) SaveEdges(workflowID string, edges []*model.WorkflowEdge) error { return nil }
+func (r *MockWorkflowRepository) GetNodes(workflowID string) ([]*model.WorkflowNode, error) { return nil, nil }
+func (r *MockWorkflowRepository) GetEdges(workflowID string) ([]*model.WorkflowEdge, error) { return nil, nil }
 var _ service.AgentRepository = (*MockAgentRepository)(nil)
 var _ service.WorkflowRepository = (*MockWorkflowRepository)(nil)
 var _ service.DocumentRepository = (*MockDocumentRepository)(nil)

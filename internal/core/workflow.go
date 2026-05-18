@@ -27,8 +27,11 @@ type WorkflowEngine struct {
 
 type WorkflowStore interface {
 	GetWorkflow(ctx context.Context, id string) (*model.Workflow, error)
-	SaveExecution(ctx context.Context, exec *model.WorkflowExecution) error
-	UpdateExecution(ctx context.Context, exec *model.WorkflowExecution) error
+	SaveExecution(exec *model.WorkflowExecution) error
+	UpdateExecution(exec *model.WorkflowExecution) error
+	// 节点/边加载（由 WorkflowEngine 在执行时调用）
+	GetNodes(workflowID string) ([]*model.WorkflowNode, error)
+	GetEdges(workflowID string) ([]*model.WorkflowEdge, error)
 }
 
 func NewWorkflowEngine(agentEngine *AgentEngine, store WorkflowStore) *WorkflowEngine {
@@ -50,9 +53,19 @@ func (e *WorkflowEngine) Execute(ctx context.Context, workflowID string, input m
 		return nil, fmt.Errorf("工作流 %s 状态非活跃", workflow.Name)
 	}
 
-	// 2. 创建执行记录
+	// 2. 加载节点和边
+	nodes, err := e.store.GetNodes(workflowID)
+	if err != nil {
+		return nil, fmt.Errorf("加载工作流节点失败: %w", err)
+	}
+	edges, err := e.store.GetEdges(workflowID)
+	if err != nil {
+		return nil, fmt.Errorf("加载工作流边失败: %w", err)
+	}
+
+	// 3. 创建执行记录
 	exec := NewWorkflowExecution(workflowID)
-	if err = e.store.SaveExecution(ctx, exec.model); err != nil {
+	if err = e.store.SaveExecution(exec.model); err != nil {
 		return nil, err
 	}
 
@@ -66,10 +79,10 @@ func (e *WorkflowEngine) Execute(ctx context.Context, workflowID string, input m
 		e.mu.Unlock()
 	}()
 
-	// 3. 构建执行图（节点 + 边）
-	graph := BuildExecutionGraph(workflow)
+	// 4. 构建执行图
+	graph := BuildExecutionGraph(workflow, nodes, edges)
 
-	// 4. 从 Start 节点开始执行
+	// 5. 从 Start 节点开始执行
 	result := e.executeGraph(ctx, exec, graph, input)
 
 	return result, nil
@@ -404,16 +417,40 @@ func (e *WorkflowExecution) AddStep(nodeID, nodeType string, output map[string]i
 
 // ==================== 图构建 ====================
 
-// BuildExecutionGraph 从 Workflow 模型构建执行图
-func BuildExecutionGraph(wf *model.Workflow) *ExecutionGraph {
+// BuildExecutionGraph 从 Workflow 模型和节点/边数据构建执行图
+func BuildExecutionGraph(wf *model.Workflow, nodes []*model.WorkflowNode, edges []*model.WorkflowEdge) *ExecutionGraph {
 	graph := &ExecutionGraph{
 		nodes: make(map[string]*GraphNode),
 		edges: make([]*GraphEdge, 0),
-		startIDs: []string{},
-		endIDs:   []string{},
 	}
-	// 这里应该从数据库/缓存加载 nodes 和 edges
-	// 简化处理：实际项目中从 repository 加载
+
+	for _, n := range nodes {
+		config := make(map[string]interface{})
+		if n.Config != "" {
+			json.Unmarshal([]byte(n.Config), &config)
+		}
+		graph.nodes[n.ID] = &GraphNode{
+			ID:       n.ID,
+			NodeType: n.NodeType,
+			Name:     n.Name,
+			Config:   config,
+		}
+		if n.NodeType == "start" {
+			graph.startIDs = append(graph.startIDs, n.ID)
+		}
+		if n.NodeType == "end" {
+			graph.endIDs = append(graph.endIDs, n.ID)
+		}
+	}
+
+	for _, e := range edges {
+		graph.edges = append(graph.edges, &GraphEdge{
+			SourceID:  e.SourceID,
+			TargetID:  e.TargetID,
+			Condition: e.Condition,
+		})
+	}
+
 	return graph
 }
 

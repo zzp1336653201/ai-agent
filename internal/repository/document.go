@@ -1,42 +1,82 @@
 package repository
 
 import (
+	"fmt"
+
 	"sirenagent/internal/model"
+
+	"gorm.io/gorm"
 )
 
-type DocumentRepository struct{}
-
-func NewDocumentRepository() *DocumentRepository {
-	return &DocumentRepository{}
+// DocumentRepo GORM 实现的文档仓库
+type DocumentRepo struct {
+	db *gorm.DB
 }
 
-// 模拟数据库操作 - 实际项目应连接真实数据库
-func (r *DocumentRepository) Create(doc *model.Document) error {
-	// TODO: 实现数据库插入
-	return nil
+func NewDocumentRepo(db *gorm.DB) *DocumentRepo {
+	return &DocumentRepo{db: db}
 }
 
-func (r *DocumentRepository) GetByID(id string) (*model.Document, error) {
-	// TODO: 实现数据库查询
-	return nil, nil
+func (r *DocumentRepo) Create(doc *model.Document) error {
+	return r.db.Create(doc).Error
 }
 
-func (r *DocumentRepository) List(page, size int) ([]*model.Document, int64, error) {
-	// TODO: 实现数据库列表查询
-	return nil, 0, nil
+func (r *DocumentRepo) GetByID(id string) (*model.Document, error) {
+	var doc model.Document
+	err := r.db.Where("id = ?", id).First(&doc).Error
+	if err != nil {
+		return nil, fmt.Errorf("文档不存在: %w", err)
+	}
+	return &doc, nil
 }
 
-func (r *DocumentRepository) ListByAgent(agentID string, page, size int) ([]*model.Document, int64, error) {
-	// TODO: 实现按 Agent 查询
-	return nil, 0, nil
+func (r *DocumentRepo) List(page, size int) ([]*model.Document, int64, error) {
+	var docs []*model.Document
+	var total int64
+
+	if err := r.db.Model(&model.Document{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := r.db.Offset(offset).Limit(size).Order("created_at DESC").Find(&docs).Error; err != nil {
+		return nil, 0, err
+	}
+	return docs, total, nil
 }
 
-func (r *DocumentRepository) ListByCategory(category string, page, size int) ([]*model.Document, int64, error) {
-	// TODO: 实现按分类查询
-	return nil, 0, nil
+func (r *DocumentRepo) ListByAgent(agentID string, page, size int) ([]*model.Document, int64, error) {
+	var docs []*model.Document
+	var total int64
+
+	query := r.db.Model(&model.Document{}).Where("agent_id = ?", agentID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := query.Offset(offset).Limit(size).Order("created_at DESC").Find(&docs).Error; err != nil {
+		return nil, 0, err
+	}
+	return docs, total, nil
 }
 
-func (r *DocumentRepository) Delete(id string) error {
-	// TODO: 实现数据库删除
-	return nil
+func (r *DocumentRepo) ListByCategory(category string, page, size int) ([]*model.Document, int64, error) {
+	var docs []*model.Document
+	var total int64
+
+	query := r.db.Model(&model.Document{}).Where("category = ?", category)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := query.Offset(offset).Limit(size).Order("created_at DESC").Find(&docs).Error; err != nil {
+		return nil, 0, err
+	}
+	return docs, total, nil
+}
+
+func (r *DocumentRepo) Delete(id string) error {
+	return r.db.Where("id = ?", id).Delete(&model.Document{}).Error
 }
