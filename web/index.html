@@ -1409,6 +1409,9 @@ function addFileUploadMessage(filename, docId) {
             try {
                 await fetch(`${API_BASE}/tests`, { method: 'DELETE' });
                 showToast('已清空所有测试记录');
+                // 清除测试卡片上的运行结果标记
+                renderTestCases();
+                // 刷新统计和历史
                 loadTestStats();
                 loadTestHistory();
             } catch (e) {
