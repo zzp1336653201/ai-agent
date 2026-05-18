@@ -406,14 +406,41 @@ func extractKeywords(systemPrompt, description string) []string {
 	seen := make(map[string]bool)
 	var keywords []string
 
-	// 提取中文词组
+	// 提取中文词组（只提取有意义的名词性词汇）
+	// 简单启发式：包含至少一个非停用词的中文词组
 	runes := []rune(allText)
 	for i := 0; i < len(runes); i++ {
 		if runes[i] > 0x4e00 && runes[i] < 0x9fff { // 中文字符范围
-			for length := 4; length >= 2; length-- {
+			for length := 6; length >= 3; length-- {
 				if i+length <= len(runes) {
 					word := string(runes[i : i+length])
-					if !stopWords[word] && !seen[word] && len([]rune(word)) >= 2 {
+					// 过滤：不能全是停用词，且不能包含过多停用词
+					if seen[word] || len([]rune(word)) < 3 {
+						continue
+					}
+					// 检查停用词比例，不能超过50%
+					wordRunes := []rune(word)
+					stopCount := 0
+					for _, r := range wordRunes {
+						if stopWords[string(r)] {
+							stopCount++
+						}
+					}
+					if float64(stopCount)/float64(len(wordRunes)) > 0.5 {
+						continue // 停用词比例太高，跳过
+					}
+					// 检查是否包含英文技术术语（agent、runtime等）
+					hasTechTerm := false
+					techTerms := []string{"agent", "runtime", "llm", "rag", "mcp", "workflow"}
+					lowerWord := strings.ToLower(word)
+					for _, term := range techTerms {
+						if strings.Contains(lowerWord, term) {
+							hasTechTerm = true
+							break
+						}
+					}
+					// 或者是长度>=4且停用词比例低的名词性词组
+					if hasTechTerm || (len(wordRunes) >= 4 && float64(stopCount)/float64(len(wordRunes)) <= 0.3) {
 						seen[word] = true
 						keywords = append(keywords, word)
 					}

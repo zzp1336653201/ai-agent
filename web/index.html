@@ -979,12 +979,15 @@ function addFileUploadMessage(filename, docId) {
             
             try {
                 const autoFetch = document.getElementById('agent-auto-fetch').checked;
+                // 状态栏显示的是 config 里配置的模型名
+                const currentModel = document.getElementById('llm-info').textContent || 'deepseek-v4-flash';
                 await apiCall('/agents', {
                     method: 'POST',
                     body: JSON.stringify({ 
                         name, 
                         description, 
                         system_prompt: systemPrompt,
+                        model: currentModel,
                         auto_fetch_knowledge: autoFetch
                     })
                 });
