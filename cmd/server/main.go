@@ -77,8 +77,9 @@ func main() {
 		if err != nil {
 			logger.Fatal("Pgvector 初始化失败", zap.Error(err))
 		}
+		pgVDB.SetEmbedder(llmProvider.Embed)
 		vectorDB = pgVDB
-		sugar.Infof("✅ 向量数据库: Pgvector (PostgreSQL)")
+		sugar.Infof("✅ 向量数据库: Pgvector (PostgreSQL，含向量检索)")
 	} else {
 		chromaDB, err := vector.NewChromaDB(cfg.VectorDB.Endpoint)
 		if err != nil {
@@ -113,6 +114,7 @@ func main() {
 		sugar.Infof("✅ 已注册 %d 个 MCP 外部工具", mcpTools)
 	}
 	agentEngine.SetPromptManager(promptMgr)
+	agentEngine.SetLogger(sugar)
 
 	// Evaluator-Optimizer
 	evaluator := core.NewEvaluator(llmProvider, cfg.LLM.Model)
@@ -135,7 +137,7 @@ func main() {
 	// 12. 创建 Service 层（注入真实 Repository）
 	agentSvc := service.NewAgentService(agentEngine, agentRepo)
 	workflowSvc := service.NewWorkflowService(workflowEngine, workflowRepo)
-	docSvc := service.NewDocumentService(docRepo, vectorDB)
+	docSvc := service.NewDocumentService(docRepo, vectorDB, llmProvider)
 
 	// 注入异步知识获取功能：创建智能体时后台自动搜索相关文档入库
 	agentSvc.SetKnowledgeFetcher(func(ctx context.Context, agentID, systemPrompt, description string) {

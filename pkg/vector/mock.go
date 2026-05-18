@@ -27,6 +27,16 @@ func (m *MockVectorProvider) Delete(ctx context.Context, docIDs []string, collec
 	return nil
 }
 
+// InsertWithVectors Mock 插入带向量
+func (m *MockVectorProvider) InsertWithVectors(ctx context.Context, docID string, chunks []string, vectors [][]float32, metadatas []map[string]interface{}, collection string) error {
+	return nil
+}
+
+// SearchByVector Mock 向量检索
+func (m *MockVectorProvider) SearchByVector(ctx context.Context, vector []float32, topK int, collection string) ([]SearchResult, error) {
+	return []SearchResult{}, nil
+}
+
 // GetCollections Mock 获取集合
 func (m *MockVectorProvider) GetCollections(ctx context.Context) ([]CollectionInfo, error) {
 	return []CollectionInfo{}, nil

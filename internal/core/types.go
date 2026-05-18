@@ -11,6 +11,14 @@ import (
 
 // ==================== Agent 引擎核心类型 ====================
 
+// Logger 简化日志接口（兼容 zap.SugaredLogger）
+type Logger interface {
+	Infof(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+}
+
 // AgentEngine 智能体引擎（核心调度器）
 type AgentEngine struct {
 	llm       llm.LLMProvider
@@ -21,6 +29,7 @@ type AgentEngine struct {
 	config    EngineConfig
 	guardrail *GuardrailManager  // 防护管理器（可选）
 	evaluator *Evaluator         // 评估优化器（可选）
+	logger    Logger             // 结构化日志（可选）
 }
 
 // EngineConfig 引擎配置
@@ -219,6 +228,28 @@ func (e *AgentEngine) SetGuardrailManager(gm *GuardrailManager) {
 // SetEvaluator 设置评估优化器
 func (e *AgentEngine) SetEvaluator(ev *Evaluator) {
 	e.evaluator = ev
+}
+
+// SetLogger 设置结构化日志器
+func (e *AgentEngine) SetLogger(l Logger) {
+	e.logger = l
+}
+
+// logf 安全地输出日志（即使 logger 未设置也不 panic）
+func (e *AgentEngine) logf(level string, format string, args ...interface{}) {
+	if e.logger == nil {
+		return
+	}
+	switch level {
+	case "debug":
+		e.logger.Debugf(format, args...)
+	case "info":
+		e.logger.Infof(format, args...)
+	case "warn":
+		e.logger.Warnf(format, args...)
+	case "error":
+		e.logger.Errorf(format, args...)
+	}
 }
 
 // GetTool 获取工具

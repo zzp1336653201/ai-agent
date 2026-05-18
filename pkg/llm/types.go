@@ -12,6 +12,8 @@ type LLMProvider interface {
 	Chat(ctx context.Context, messages []*Message) (*ChatResponse, error)
 	// ChatStream 流式对话
 	ChatStream(ctx context.Context, messages []*Message) (<-chan StreamChunk, error)
+	// Embed 文本向量化（用于 RAG 检索）
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 // GenerateRequest 统一生成请求

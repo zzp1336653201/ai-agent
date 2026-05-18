@@ -1284,11 +1284,14 @@ function addFileUploadMessage(filename, docId) {
         // 测试用例定义
         const TEST_CASES = [
             { name: '健康检查', category: 'system', color: '#22c55e', icon: '🏥', endpoint: '/health', method: 'GET', body: null, desc: '检测 API 服务是否正常运行' },
-            { name: '创建智能体', category: 'agent', color: '#6366f1', icon: '🤖', endpoint: '/agents', method: 'POST', body: { name: '测试助手', description: '自动创建的测试智能体', system_prompt: '你是一个友好的助手' }, desc: '测试智能体创建和数据库写入' },
+            { name: '创建智能体', category: 'agent', color: '#6366f1', icon: '🤖', endpoint: '/agents', method: 'POST', body: { name: '测试助手', description: '自动创建的测试智能体', system_prompt: '你是一个友好的助手，可以使用计算器和文件读取工具帮助用户。' }, desc: '测试智能体创建和数据库写入' },
             { name: '列出智能体', category: 'agent', color: '#6366f1', icon: '📋', endpoint: '/agents', method: 'GET', body: null, desc: '测试智能体列表查询和数据库读取' },
-            { name: '上传文档', category: 'document', color: '#f59e0b', icon: '📄', endpoint: '/documents', method: 'POST', body: { title: '测试文档', content: '这是自动创建的测试文档内容，用于验证文档上传和向量化流程。', type: 'txt' }, desc: '测试文档上传、分块和向量入库' },
+            { name: '上传文档', category: 'document', color: '#f59e0b', icon: '📄', endpoint: '/documents', method: 'POST', body: { title: '测试文档', content: '这是自动创建的测试文档内容，用于验证文档上传、分块、Embedding 向量化和入库流程。关键词：向量检索、RAG、语义搜索。', type: 'txt', category: 'test' }, desc: '测试文档上传、Embedding 向量化、分块和向量入库' },
             { name: '列出文档', category: 'document', color: '#f59e0b', icon: '📚', endpoint: '/documents', method: 'GET', body: null, desc: '测试文档列表查询' },
-            { name: 'RAG 查询', category: 'chat', color: '#ec4899', icon: '💬', endpoint: '/query', method: 'POST', body: { query: '测试文档说了什么？', top_k: 3 }, desc: '测试 RAG 检索问答流程（需要先有文档）' },
+            { name: 'RAG 向量检索', category: 'chat', color: '#ec4899', icon: '🔍', endpoint: '/query', method: 'POST', body: { query: '语义搜索和向量化', top_k: 3, collection: 'test' }, desc: '测试 Pgvector 向量检索 / cosine similarity 语义搜索' },
+            { name: 'Agent 计算器工具', category: 'integration', color: '#8b5cf6', icon: '🧮', endpoint: '/agents/{id}/chat', method: 'POST', body: { message: '请计算 (15 / 3 + 7) * 2 等于多少？' }, desc: '测试 Agent ReAct 循环 + calculator 工具调用链路' },
+            { name: 'Agent 文件读取工具', category: 'integration', color: '#8b5cf6', icon: '📂', endpoint: '/agents/{id}/chat', method: 'POST', body: { message: '请读取 ai-agent/README.md 文件的开头几行，告诉我这个项目是什么。' }, desc: '测试 Agent file_read 工具调用 + 路径安全白名单' },
+            { name: 'Agent 流式对话', category: 'integration', color: '#8b5cf6', icon: '💬', endpoint: '/agents/{id}/chat/stream', method: 'GET', body: null, desc: '测试 SSE 流式响应和 Token 推送' },
             { name: '创建工作流', category: 'workflow', color: '#06b6d4', icon: '🔄', endpoint: '/workflows', method: 'POST', body: { name: '测试工作流', description: '自动创建的测试工作流' }, desc: '测试工作流创建和数据库写入' },
             { name: '列出工作流', category: 'workflow', color: '#06b6d4', icon: '📋', endpoint: '/workflows', method: 'GET', body: null, desc: '测试工作流列表查询' },
         ];
@@ -1324,38 +1327,140 @@ function addFileUploadMessage(filename, docId) {
             `).join('');
         }
 
+        // 获取或创建测试 Agent（集成测试用）
+        async function getOrCreateTestAgent() {
+            try {
+                const resp = await fetch(`${API_BASE}/agents?page=1&size=5`);
+                const result = await resp.json();
+                const agents = result.data || [];
+                const testAgent = agents.find(a => a.name === '测试助手');
+                if (testAgent) return testAgent.id;
+            } catch (e) { console.warn('获取 agent 列表失败', e); }
+
+            // 没有则创建一个
+            const resp = await fetch(`${API_BASE}/agents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: '测试助手', description: '自动创建的测试智能体', system_prompt: '你是一个友好的助手，可以使用计算器和文件读取工具帮助用户。' })
+            });
+            const result = await resp.json();
+            return result.data?.id;
+        }
+
         // 运行单个测试
         async function runSingleTest(testName) {
             const tc = TEST_CASES.find(t => t.name === testName);
             if (!tc) return;
-            
+
             const resultEl = document.getElementById(`test-result-${testName}`);
             resultEl.innerHTML = '<span style="color: var(--text-muted);"><div class="spinner" style="display:inline-block;width:12px;height:12px;margin-right:0.3rem;"></div>运行中...</span>';
-            
+
             const startTime = Date.now();
+            let endpoint = tc.endpoint;
+            let requestBody = tc.body;
+            let extraAssert = '';
+
             try {
+                // ===== 集成测试前置处理 =====
+                if (tc.category === 'integration' && endpoint.includes('{id}')) {
+                    const agentId = await getOrCreateTestAgent();
+                    if (!agentId) throw new Error('无法获取或创建测试 Agent');
+                    endpoint = endpoint.replace('{id}', agentId);
+                    if (requestBody) requestBody = { ...requestBody, agent_id: agentId };
+                }
+
+                // ===== RAG 向量检索额外断言 =====
+                if (tc.name === 'RAG 向量检索') {
+                    extraAssert = 'rag';
+                }
+
+                // ===== Agent 流式对话测试 =====
+                if (tc.name === 'Agent 流式对话') {
+                    const agentId = await getOrCreateTestAgent();
+                    if (!agentId) throw new Error('无法获取或创建测试 Agent');
+                    const streamUrl = `${API_BASE}/agents/${agentId}/chat/stream?message=你好，请介绍一下你自己&user_id=test_user`;
+                    const resp = await fetch(streamUrl);
+                    const text = await resp.text();
+                    const duration = Date.now() - startTime;
+                    if (resp.ok && text.includes('data:')) {
+                        resultEl.innerHTML = `<span style="color: #22c55e;">✅ 通过 (${duration}ms) · 收到 SSE 事件</span>`;
+                        await saveTestResult(testName, tc.category, 'success', streamUrl, text.slice(0, 300), duration, '');
+                    } else {
+                        throw new Error('SSE 流式响应异常');
+                    }
+                    loadTestStats();
+                    loadTestHistory();
+                    return;
+                }
+
+                // ===== 标准 HTTP 请求 =====
                 const options = { method: tc.method };
-                if (tc.body) {
-                    options.body = JSON.stringify(tc.body);
+                if (requestBody) {
+                    options.body = JSON.stringify(requestBody);
                     options.headers = { 'Content-Type': 'application/json' };
                 }
-                const resp = await fetch(`${API_BASE}${tc.endpoint}`, options);
+                const resp = await fetch(`${API_BASE}${endpoint}`, options);
                 const data = await resp.json();
                 const duration = Date.now() - startTime;
-                
-                if (resp.ok) {
-                    resultEl.innerHTML = `<span style="color: #22c55e;">✅ 通过 (${duration}ms)</span>`;
-                    await saveTestResult(testName, tc.category, 'success', JSON.stringify(tc.body), JSON.stringify(data).slice(0, 500), duration, '');
-                } else {
+
+                if (!resp.ok) {
                     resultEl.innerHTML = `<span style="color: #ef4444;">❌ 失败 (${duration}ms): ${data.error || resp.statusText}</span>`;
-                    await saveTestResult(testName, tc.category, 'failed', JSON.stringify(tc.body), JSON.stringify(data).slice(0, 500), duration, data.error || resp.statusText);
+                    await saveTestResult(testName, tc.category, 'failed', JSON.stringify(requestBody), JSON.stringify(data).slice(0, 500), duration, data.error || resp.statusText);
+                    loadTestStats();
+                    loadTestHistory();
+                    return;
+                }
+
+                // ===== 响应断言 =====
+                let assertPass = true;
+                let assertMsg = '';
+
+                if (extraAssert === 'rag') {
+                    const sources = data.data?.sources || [];
+                    if (sources.length === 0) {
+                        assertPass = false;
+                        assertMsg = '未检索到任何文档片段（向量为空或 embedding 失败）';
+                    } else {
+                        assertMsg = `检索到 ${sources.length} 个片段`;
+                    }
+                }
+
+                if (tc.name === 'Agent 计算器工具') {
+                    const answer = data.data?.answer || '';
+                    const toolCalls = data.data?.tool_calls || [];
+                    const hasCalc = toolCalls.some(t => t.tool_name === 'calculator' || t.tool_name === 'CalculatorTool');
+                    if (!hasCalc) {
+                        assertPass = false;
+                        assertMsg = 'Agent 未调用 calculator 工具';
+                    } else {
+                        assertMsg = 'Agent 正确调用了 calculator 工具';
+                    }
+                }
+
+                if (tc.name === 'Agent 文件读取工具') {
+                    const toolCalls = data.data?.tool_calls || [];
+                    const hasFile = toolCalls.some(t => t.tool_name === 'file_read' || t.tool_name === 'FileReadTool');
+                    if (!hasFile) {
+                        assertPass = false;
+                        assertMsg = 'Agent 未调用 file_read 工具';
+                    } else {
+                        assertMsg = 'Agent 正确调用了 file_read 工具';
+                    }
+                }
+
+                if (assertPass) {
+                    resultEl.innerHTML = `<span style="color: #22c55e;">✅ 通过 (${duration}ms)${assertMsg ? ' · ' + assertMsg : ''}</span>`;
+                    await saveTestResult(testName, tc.category, 'success', JSON.stringify(requestBody), JSON.stringify(data).slice(0, 500), duration, '');
+                } else {
+                    resultEl.innerHTML = `<span style="color: #ef4444;">❌ 断言失败 (${duration}ms): ${assertMsg}</span>`;
+                    await saveTestResult(testName, tc.category, 'failed', JSON.stringify(requestBody), JSON.stringify(data).slice(0, 500), duration, assertMsg);
                 }
             } catch (error) {
                 const duration = Date.now() - startTime;
                 resultEl.innerHTML = `<span style="color: #ef4444;">❌ 异常: ${error.message}</span>`;
-                await saveTestResult(testName, tc.category, 'failed', JSON.stringify(tc.body), '', duration, error.message);
+                await saveTestResult(testName, tc.category, 'failed', JSON.stringify(requestBody), '', duration, error.message);
             }
-            
+
             loadTestStats();
             loadTestHistory();
         }
@@ -1475,7 +1580,7 @@ function addFileUploadMessage(filename, docId) {
         }
 
         function getCategoryColor(cat) {
-            const colors = { system: '#22c55e', agent: '#6366f1', document: '#f59e0b', chat: '#ec4899', workflow: '#06b6d4' };
+            const colors = { system: '#22c55e', agent: '#6366f1', document: '#f59e0b', chat: '#ec4899', workflow: '#06b6d4', integration: '#8b5cf6' };
             return colors[cat] || '#94a3b8';
         }
 

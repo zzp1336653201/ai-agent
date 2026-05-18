@@ -277,6 +277,80 @@ func (o *OllamaProvider) ChatStream(ctx context.Context, messages []*Message) (<
 	return ch, nil
 }
 
+// Embed 调用 Ollama Embedding API 将文本转为向量
+func (o *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+
+	model := "nomic-embed-text"
+
+	// 先尝试批量请求（Ollama 0.1.26+）
+	batchBody := map[string]interface{}{
+		"model": model,
+		"input": texts,
+	}
+	jsonData, _ := json.Marshal(batchBody)
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", o.endpoint+"/api/embed", bytes.NewBuffer(jsonData))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := o.client.Do(httpReq)
+	if err == nil {
+		var result struct {
+			Embeddings [][]float64 `json:"embeddings"`
+		}
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr == nil && len(result.Embeddings) == len(texts) {
+			resp.Body.Close()
+			embeddings := make([][]float32, len(texts))
+			for i, emb := range result.Embeddings {
+				vec := make([]float32, len(emb))
+				for j, v := range emb {
+					vec[j] = float32(v)
+				}
+				embeddings[i] = vec
+			}
+			return embeddings, nil
+		}
+		resp.Body.Close()
+	}
+
+	// 批量失败则逐个回退
+	embeddings := make([][]float32, len(texts))
+	for i, text := range texts {
+		body := map[string]interface{}{
+			"model": model,
+			"input": text,
+		}
+		jsonData, _ := json.Marshal(body)
+		httpReq, _ := http.NewRequestWithContext(ctx, "POST", o.endpoint+"/api/embed", bytes.NewBuffer(jsonData))
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := o.client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("调用 Ollama embedding 失败 (text[%d]): %w", i, err)
+		}
+
+		var result struct {
+			Embeddings [][]float64 `json:"embeddings"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("解析 embedding 响应失败 (text[%d]): %w", i, err)
+		}
+		resp.Body.Close()
+
+		if len(result.Embeddings) > 0 && len(result.Embeddings[0]) > 0 {
+			vec := make([]float32, len(result.Embeddings[0]))
+			for j, v := range result.Embeddings[0] {
+				vec[j] = float32(v)
+			}
+			embeddings[i] = vec
+		}
+	}
+
+	return embeddings, nil
+}
+
 func convertMessages(messages []*Message) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(messages))
 	for _, m := range messages {

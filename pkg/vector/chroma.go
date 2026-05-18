@@ -12,6 +12,8 @@ import (
 type VectorProvider interface {
 	Search(ctx context.Context, query string, topK int, collection string) ([]SearchResult, error)
 	Insert(ctx context.Context, docID string, chunks []string, metadatas []map[string]interface{}, collection string) error
+	InsertWithVectors(ctx context.Context, docID string, chunks []string, vectors [][]float32, metadatas []map[string]interface{}, collection string) error
+	SearchByVector(ctx context.Context, vector []float32, topK int, collection string) ([]SearchResult, error)
 	Delete(ctx context.Context, docIDs []string, collection string) error
 	GetCollections(ctx context.Context) ([]CollectionInfo, error)
 }
@@ -163,6 +165,123 @@ func (c *ChromaDB) Delete(ctx context.Context, docIDs []string, collection strin
 	defer resp.Body.Close()
 
 	return nil
+}
+
+func (c *ChromaDB) InsertWithVectors(ctx context.Context, docID string, chunks []string, vectors [][]float32, metadatas []map[string]interface{}, collection string) error {
+	ids := make([]string, len(chunks))
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%s_%d", docID, i)
+	}
+
+	// 转换 float32 -> float64（ChromaDB 期望 float64）
+	embeddings := make([][]float64, len(vectors))
+	for i, v := range vectors {
+		emb := make([]float64, len(v))
+		for j, f := range v {
+			emb[j] = float64(f)
+		}
+		embeddings[i] = emb
+	}
+
+	reqBody := map[string]interface{}{
+		"ids":        ids,
+		"documents":  chunks,
+		"embeddings": embeddings,
+		"metadatas":  metadatas,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/collections/%s/add", c.endpoint, collection)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ChromaDB 插入向量失败: status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *ChromaDB) SearchByVector(ctx context.Context, vector []float32, topK int, collection string) ([]SearchResult, error) {
+	// 转换 float32 -> float64
+	embedding := make([]float64, len(vector))
+	for i, f := range vector {
+		embedding[i] = float64(f)
+	}
+
+	reqBody := map[string]interface{}{
+		"query_embeddings": []interface{}{embedding},
+		"n_results":        topK,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/collections/%s/query", c.endpoint, collection)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ChromaDB 向量查询失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		IDs       [][]string                   `json:"ids"`
+		Distances [][]float64                  `json:"distances"`
+		Metadatas [][][]map[string]interface{} `json:"metadatas"`
+		Documents [][]string                   `json:"documents"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	searchResults := make([]SearchResult, 0)
+	for i := range result.IDs {
+		for j, id := range result.IDs[i] {
+			var content string
+			if len(result.Documents) > i && len(result.Documents[i]) > j {
+				content = result.Documents[i][j]
+			}
+			var score float64 = 0
+			if len(result.Distances) > i && len(result.Distances[i]) > j {
+				score = 1 - result.Distances[i][j]
+			}
+			var metadata map[string]interface{}
+			if len(result.Metadatas) > i && len(result.Metadatas[i]) > j && len(result.Metadatas[i][j]) > 0 {
+				metadata = result.Metadatas[i][j][0]
+			}
+			searchResults = append(searchResults, SearchResult{
+				ID:         id,
+				Content:    content,
+				DocumentID: id,
+				Score:      score,
+				Metadata:   metadata,
+			})
+		}
+	}
+
+	return searchResults, nil
 }
 
 func (c *ChromaDB) GetCollections(ctx context.Context) ([]CollectionInfo, error) {

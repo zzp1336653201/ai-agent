@@ -14,6 +14,12 @@ import (
 type DocumentService struct {
 	repo     DocumentRepository
 	vectorDB vector.VectorProvider
+	embedder Embedder
+}
+
+// Embedder 文本向量化接口
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 type DocumentRepository interface {
@@ -25,8 +31,8 @@ type DocumentRepository interface {
 	Delete(id string) error
 }
 
-func NewDocumentService(repo DocumentRepository, vectorDB vector.VectorProvider) *DocumentService {
-	return &DocumentService{repo: repo, vectorDB: vectorDB}
+func NewDocumentService(repo DocumentRepository, vectorDB vector.VectorProvider, embedder Embedder) *DocumentService {
+	return &DocumentService{repo: repo, vectorDB: vectorDB, embedder: embedder}
 }
 
 // UploadRequest 文档上传请求（知识管理员使用）
@@ -132,18 +138,43 @@ func (s *DocumentService) Upload(ctx context.Context, req *UploadRequest) (*mode
 		}
 	}
 
-	// 插入向量库
-	if s.vectorDB != nil {
-		fmt.Printf("[DocumentService] 向量入库: doc=%s, chunks=%d, collection=%s\n",
-			doc.ID, len(chunks), collection)
-		if err := s.vectorDB.Insert(ctx, doc.ID, chunks, metadatas, collection); err != nil {
-			return nil, fmt.Errorf("向量入库失败: %w", err)
-		}
+	// 插入向量库（有 embedder 时走真正的向量入库，否则降级为纯文本）
+	if err := s.insertChunks(ctx, doc.ID, chunks, metadatas, collection); err != nil {
+		return nil, fmt.Errorf("向量入库失败: %w", err)
 	}
 
 	fmt.Printf("[DocumentService] 文档上传成功: %q (ID=%s, type=%s, category=%s, chunks=%d)\n",
 		req.Title, doc.ID, docType, req.Category, len(chunks))
 	return doc, nil
+}
+
+// insertChunks 插入分块到向量库，优先使用 embedding 向量
+func (s *DocumentService) insertChunks(ctx context.Context, docID string, chunks []string, metadatas []map[string]interface{}, collection string) error {
+	if s.vectorDB == nil {
+		return nil
+	}
+	fmt.Printf("[DocumentService] 向量入库: doc=%s, chunks=%d, collection=%s\n",
+		docID, len(chunks), collection)
+
+	// 有 embedder 时生成向量并走 InsertWithVectors
+	if s.embedder != nil && len(chunks) > 0 {
+		embeddings, err := s.embedder.Embed(ctx, chunks)
+		if err == nil && len(embeddings) == len(chunks) {
+			if err := s.vectorDB.InsertWithVectors(ctx, docID, chunks, embeddings, metadatas, collection); err != nil {
+				return err
+			}
+			fmt.Printf("[DocumentService] 向量入库完成（含 embedding）: doc=%s\n", docID)
+			return nil
+		}
+		fmt.Printf("[DocumentService] embedding 生成失败，降级为纯文本入库: %v\n", err)
+	}
+
+	// 降级：纯文本入库（无向量，检索时只能用关键词匹配）
+	if err := s.vectorDB.Insert(ctx, docID, chunks, metadatas, collection); err != nil {
+		return err
+	}
+	fmt.Printf("[DocumentService] 向量入库完成（纯文本）: doc=%s\n", docID)
+	return nil
 }
 
 // ImportFromURL 从 URL 导入知识文档
@@ -208,12 +239,8 @@ func (s *DocumentService) ImportFromURL(ctx context.Context, req *ImportURLReque
 		}
 	}
 
-	if s.vectorDB != nil {
-		fmt.Printf("[DocumentService] URL导入向量入库: doc=%s, chunks=%d, collection=%s\n",
-			doc.ID, len(parsed.Chunks), collection)
-		if err := s.vectorDB.Insert(ctx, doc.ID, parsed.Chunks, metadatas, collection); err != nil {
-			return nil, fmt.Errorf("向量入库失败: %w", err)
-		}
+	if err := s.insertChunks(ctx, doc.ID, parsed.Chunks, metadatas, collection); err != nil {
+		return nil, fmt.Errorf("向量入库失败: %w", err)
 	}
 
 	fmt.Printf("[DocumentService] URL导入成功: %q (URL=%s, chunks=%d)\n", title, req.URL, len(parsed.Chunks))

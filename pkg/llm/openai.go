@@ -208,6 +208,61 @@ func (o *OpenAIProvider) doChat(ctx context.Context, req *GenerateRequest, strea
 	}, nil
 }
 
+// Embed 调用 OpenAI Embedding API 将文本转为向量
+func (o *OpenAIProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+
+	body := map[string]interface{}{
+		"input": texts,
+		"model": o.model,
+	}
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("序列化 embedding 请求失败: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.endpoint+"/v1/embeddings", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("创建 embedding 请求失败: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+
+	resp, err := o.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("调用 embedding API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+			Index     int       `json:"index"`
+		} `json:"data"`
+		Usage struct {
+			TotalTokens int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析 embedding 响应失败: %w", err)
+	}
+
+	embeddings := make([][]float32, len(texts))
+	for _, item := range result.Data {
+		if item.Index < len(embeddings) {
+			vec := make([]float32, len(item.Embedding))
+			for i, v := range item.Embedding {
+				vec[i] = float32(v)
+			}
+			embeddings[item.Index] = vec
+		}
+	}
+
+	return embeddings, nil
+}
+
 // doStreamRequest 发起流式请求
 func (o *OpenAIProvider) doStreamRequest(ctx context.Context, req *GenerateRequest) (*http.Response, error) {
 	model := req.Model

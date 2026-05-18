@@ -83,6 +83,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	numTools := len(tools)
 	logPrefix := fmt.Sprintf("[Agent:%s]", agent.Name)
 
+	e.logf("info", "Agent Run started: agent=%s message_len=%d tools=%d", agent.Name, len(userMessage), numTools)
 	fmt.Printf("%s 开始推理, 用户消息: %s, 可用工具: %d个\n", logPrefix, truncateForLog(userMessage, 80), numTools)
 
 	// 判断用户消息是否属于"实时数据"类 — 如果是，强制优先调工具
@@ -134,6 +135,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 		fmt.Printf("%s [第%d轮] 调用 LLM (tools=%d)...\n", logPrefix, turn+1, len(tools))
 		resp, err := e.llm.Generate(ctx, req)
 		if err != nil {
+			e.logf("error", "Agent LLM call failed: agent=%s turn=%d error=%v", agent.Name, turn+1, err)
 			return nil, fmt.Errorf("第%d轮 LLM 调用失败: %w", turn+1, err)
 		}
 		totalToken.PromptTokens += resp.TokenUsage.PromptTokens
@@ -182,12 +184,13 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 			// ===== Guardrail 2: 工具调用防护 =====
 			if e.guardrail != nil {
 				toolCheck := e.guardrail.ToolGuardrail().CheckToolWithParams(tc.Function.Name, params)
-				if toolCheck.IsBlocked() {
-					msg := fmt.Sprintf("🛑 工具调用被安全策略拦截。[原因: %s]", toolCheck.Reason)
-					record.Output = NewToolResult(msg)
-					fmt.Printf("%s [第%d轮] 🛑 工具被拦截: %s\n", logPrefix, turn+1, toolCheck.Reason)
-					continue // 跳过执行，进入下一轮
-				}
+			if toolCheck.IsBlocked() {
+				msg := fmt.Sprintf("🛑 工具调用被安全策略拦截。[原因: %s]", toolCheck.Reason)
+				record.Output = NewToolResult(msg)
+				e.logf("warn", "Agent tool blocked: agent=%s turn=%d tool=%s reason=%s", agent.Name, turn+1, tc.Function.Name, toolCheck.Reason)
+				fmt.Printf("%s [第%d轮] 🛑 工具被拦截: %s\n", logPrefix, turn+1, toolCheck.Reason)
+				continue // 跳过执行，进入下一轮
+			}
 				if toolCheck.RequiresConfirmation {
 					msg := fmt.Sprintf("⚠️ 工具 %s 为高风险操作，已确认后执行（参数: %v）", tc.Function.Name, params)
 					fmt.Printf("%s [第%d轮] ⚠️ 高风险工具已确认: %s\n", logPrefix, turn+1, tc.Function.Name)
@@ -206,10 +209,12 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 				cancel()
 				if toolErr != nil {
 					record.Output = NewToolError(toolErr)
+					e.logf("error", "Agent tool failed: agent=%s turn=%d tool=%s error=%v", agent.Name, turn+1, tc.Function.Name, toolErr)
 					fmt.Printf("%s [第%d轮] ✗ 工具 %s 执行错误: %v\n", logPrefix, turn+1, tc.Function.Name, toolErr)
 				} else {
 					record.Output = output
 					outputPreview := truncateForLog(output.Content, 120)
+					e.logf("info", "Agent tool success: agent=%s turn=%d tool=%s latency_ms=%d", agent.Name, turn+1, tc.Function.Name, time.Since(startTime).Milliseconds())
 					fmt.Printf("%s [第%d轮] ✓ 工具 %s 执行成功, 结果: %s\n", logPrefix, turn+1, tc.Function.Name, outputPreview)
 				}
 			}
@@ -247,6 +252,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	}
 
 	result.TokenUsage = totalToken
+	e.logf("info", "Agent Run completed: agent=%s turns=%d tool_calls=%d tokens=%d", agent.Name, result.Turns, len(result.ToolCalls), totalToken.TotalTokens)
 	fmt.Printf("%s 推理完成, 轮次:%d, 工具调用:%d次, Token:%d\n", logPrefix, result.Turns, len(result.ToolCalls), totalToken.TotalTokens)
 
 	// ===== Trace: 记录工具明细 =====
@@ -284,6 +290,7 @@ func (e *AgentEngine) Run(ctx context.Context, agent *model.Agent, userMessage s
 	if e.evaluator != nil && result.Answer != "" && result.Turns > 0 {
 		optimized, quality, rounds := e.evaluator.OptimizeLoop(ctx, processedInput, result.Answer, result.ToolCalls)
 		if rounds > 0 {
+			e.logf("info", "Agent answer optimized: agent=%s score=%d rounds=%d", agent.Name, quality.Score, rounds)
 			fmt.Printf("%s 📊 评估优化: 评分=%d/10, 优化轮次=%d, 长度=%d→%d字\n",
 				logPrefix, quality.Score, rounds,
 				len([]rune(result.Answer)), len([]rune(optimized)))
