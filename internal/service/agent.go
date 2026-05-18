@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"sirenagent/internal/core"
 	"sirenagent/internal/model"
@@ -124,6 +125,47 @@ func (s *AgentService) ChatStream(ctx context.Context, req *ChatRequest) (<-chan
 // DeleteAgent 删除智能体
 func (s *AgentService) Delete(id string) error { return s.repo.Delete(id) }
 
+// Update 更新智能体
+func (s *AgentService) Update(id string, req *UpdateAgentRequest) (*model.Agent, error) {
+	agent, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("智能体不存在: %w", err)
+	}
+
+	if req.Name != "" {
+		agent.Name = req.Name
+	}
+	if req.Description != "" {
+		agent.Description = req.Description
+	}
+	if req.SystemPrompt != "" {
+		agent.SystemPrompt = req.SystemPrompt
+	}
+	if req.Model != "" {
+		agent.Model = req.Model
+	}
+	if req.Temperature > 0 {
+		agent.Temperature = req.Temperature
+	}
+	if req.MaxTokens > 0 {
+		agent.MaxTokens = req.MaxTokens
+	}
+	if req.MemoryType != "" {
+		agent.MemoryType = req.MemoryType
+	}
+	if req.Status != "" {
+		agent.Status = req.Status
+	}
+
+	agent.UpdatedAt = time.Now()
+
+	if err := s.repo.Update(agent); err != nil {
+		return nil, fmt.Errorf("更新失败: %w", err)
+	}
+	fmt.Printf("[AgentService] 更新智能体: %s (ID=%s)\n", agent.Name, agent.ID)
+	return agent, nil
+}
+
 // ==================== 请求/响应类型 ====================
 
 type CreateAgentRequest struct {
@@ -136,6 +178,17 @@ type CreateAgentRequest struct {
 	MemoryType     string   `json:"memory_type"`
 	Tools          []string `json:"tools"`
 	KnowledgeBaseID string `json:"knowledge_base_id"` // 不传则自动生成
+}
+
+type UpdateAgentRequest struct {
+	Name         string  `json:"name"`
+	Description  string  `json:"description"`
+	SystemPrompt string  `json:"system_prompt"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"max_tokens"`
+	MemoryType   string  `json:"memory_type"`
+	Status       string  `json:"status"` // active|inactive
 }
 
 func truncateMsg(s string) string {

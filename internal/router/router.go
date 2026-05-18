@@ -27,6 +27,7 @@ func RegisterRoutes(
 			agents.GET("/:id", agentHandler.Get)           // 获取智能体详情
 			agents.POST("/:id/chat", agentHandler.Chat)    // 与智能体对话
 			agents.GET("/:id/chat/stream", agentHandler.ChatStream) // SSE 流式对话
+			agents.PUT("/:id", agentHandler.Update)        // 更新智能体
 			agents.DELETE("/:id", agentHandler.Delete)     // 删除智能体
 		}
 

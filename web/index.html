@@ -526,11 +526,12 @@
                                 <th>名称</th>
                                 <th>描述</th>
                                 <th>状态</th>
+                                <th>对话</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody id="agents-table">
-                            <tr><td colspan="4" class="loading"><div class="spinner"></div>加载中...</td></tr>
+                            <tr><td colspan="5" class="loading"><div class="spinner"></div>加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -903,14 +904,14 @@ function addFileUploadMessage(filename, docId) {
                 renderAgents();
             } catch (error) {
                 document.getElementById('agents-table').innerHTML = 
-                    `<tr><td colspan="4" style="color: #ef4444;">加载失败: ${error.message}</td></tr>`;
+                    `<tr><td colspan="5" style="color: #ef4444;">加载失败: ${error.message}</td></tr>`;
             }
         }
         
         function renderAgents() {
             const tbody = document.getElementById('agents-table');
             if (agents.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">暂无智能体</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">暂无智能体</td></tr>';
                 return;
             }
             
@@ -920,7 +921,11 @@ function addFileUploadMessage(filename, docId) {
                     <td>${agent.description || '-'}</td>
                     <td><span class="badge ${agent.status === 'active' ? 'badge-success' : 'badge-warning'}">${agent.status || 'active'}</span></td>
                     <td>
-                        <button class="btn btn-primary" onclick="chatWithAgent('${agent.id}')">💬 对话</button>
+                        <button class="btn btn-primary" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" onclick="chatWithAgent('${agent.id}')">💬 对话</button>
+                    </td>
+                    <td>
+                        <button class="btn" style="padding: 0.3rem 0.7rem; font-size: 0.8rem; color: #60a5fa;" onclick="showEditAgentModal('${agent.id}')">✏️</button>
+                        <button class="btn" style="padding: 0.3rem 0.7rem; font-size: 0.8rem; color: #ef4444;" onclick="deleteAgent('${agent.id}')">🗑</button>
                     </td>
                 </tr>
             `).join('');
@@ -980,6 +985,82 @@ function addFileUploadMessage(filename, docId) {
             currentAgentId = agentId;
             document.querySelector('[data-tab="chat"]').click();
             showToast('已切换到与该智能体对话');
+        }
+
+        // 删除智能体
+        async function deleteAgent(agentId) {
+            if (!confirm('确定要删除这个智能体吗？')) return;
+            try {
+                await apiCall(`/agents/${agentId}`, { method: 'DELETE' });
+                showToast('删除成功');
+                loadAgents();
+            } catch (error) {
+                showToast('删除失败: ' + error.message, 'error');
+            }
+        }
+
+        // 显示编辑智能体弹窗
+        async function showEditAgentModal(agentId) {
+            const agent = agents.find(a => a.id === agentId);
+            if (!agent) {
+                showToast('智能体数据未加载', 'error');
+                return;
+            }
+
+            document.getElementById('modal').style.display = 'flex';
+            document.getElementById('modal-title').textContent = `✏️ 编辑智能体 - ${agent.name}`;
+            document.getElementById('modal-content').innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">名称</label>
+                    <input type="text" class="form-input" id="edit-agent-name" value="${agent.name || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述</label>
+                    <textarea class="form-textarea" id="edit-agent-desc" style="min-height:60px;">${agent.description || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">角色设定 (System Prompt)</label>
+                    <textarea class="form-textarea" id="edit-agent-prompt" style="min-height:80px;">${agent.system_prompt || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">模型</label>
+                    <input type="text" class="form-input" id="edit-agent-model" value="${agent.model || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">状态</label>
+                    <select class="form-select" id="edit-agent-status">
+                        <option value="active" ${agent.status === 'active' ? 'selected' : ''}>active - 启用</option>
+                        <option value="inactive" ${agent.status === 'inactive' ? 'selected' : ''}>inactive - 停用</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                    <button class="btn" onclick="document.getElementById('modal').style.display='none'">取消</button>
+                    <button class="btn btn-primary" onclick="editAgent('${agentId}')">保存</button>
+                </div>
+            `;
+        }
+
+        // 更新智能体
+        async function editAgent(agentId) {
+            const body = {
+                name: document.getElementById('edit-agent-name').value.trim(),
+                description: document.getElementById('edit-agent-desc').value.trim(),
+                system_prompt: document.getElementById('edit-agent-prompt').value.trim(),
+                model: document.getElementById('edit-agent-model').value.trim(),
+                status: document.getElementById('edit-agent-status').value
+            };
+
+            try {
+                await apiCall(`/agents/${agentId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(body)
+                });
+                showToast('更新成功！');
+                document.getElementById('modal').style.display = 'none';
+                loadAgents();
+            } catch (error) {
+                showToast('更新失败: ' + error.message, 'error');
+            }
         }
         
         // ==================== Knowledge Functions ====================

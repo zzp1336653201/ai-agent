@@ -132,3 +132,20 @@ func (h *AgentHandler) Delete(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
+
+// Update 更新智能体
+// PUT /api/v1/agents/:id
+func (h *AgentHandler) Update(c *gin.Context) {
+	id := c.Param("id")
+	var req service.UpdateAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	agent, err := h.svc.Update(id, &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": agent})
+}
