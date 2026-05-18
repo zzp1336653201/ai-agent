@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -134,20 +135,16 @@ func TestFileReadTool_ReadKnownFile(t *testing.T) {
 	tool := NewFileReadTool()
 	ctx := context.Background()
 
-	// 尝试两种可能的路径（go test 包模式 vs 根目录模式）
-	candidates := []string{"tools.go", "internal/core/tools.go"}
-	var res *ToolResult
-	var err error
-	for _, p := range candidates {
-		res, err = tool.Execute(ctx, map[string]interface{}{"path": p})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !strings.Contains(res.Content, "❌") {
-			break // 找到了
-		}
+	// 通过 runtime.Caller 获取当前测试文件路径，确保不受 CWD 影响
+	_, filename, _, _ := runtime.Caller(0)
+	toolsPath := filepath.Join(filepath.Dir(filename), "tools.go")
+
+	res, err := tool.Execute(ctx, map[string]interface{}{"path": toolsPath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(res.Content, "❌") {
+	// 工具成功时不会返回 "❌" 前缀；文件内容本身可能含 "❌"，不能用 Contains
+	if strings.HasPrefix(res.Content, "❌") {
 		t.Fatalf("读取已知文件被拦截: %s", res.Content)
 	}
 	if !strings.Contains(res.Content, "package core") {

@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ==================== 内置工具集 ====================
@@ -956,9 +961,169 @@ func (t *CalculatorTool) Parameters() map[string]interface{} {
 	}
 }
 func (t *CalculatorTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	return &ToolResult{
-		Content: "计算功能待实现，请接入 govaluate 库",
-	}, nil
+	expr, _ := params["expression"].(string)
+	if expr == "" {
+		return NewToolResult("❌ 缺少 expression 参数"), nil
+	}
+	normalized := normalizeExpression(expr)
+	result, err := safeEvaluate(normalized)
+	if err != nil {
+		return NewToolResult(fmt.Sprintf("❌ 计算错误: %v", err)), nil
+	}
+	return NewToolResult(fmt.Sprintf("计算结果: %v", result)), nil
+}
+
+// normalizeExpression 清理表达式中的自然语言，保留数字和运算符
+func normalizeExpression(expr string) string {
+	expr = strings.ToLower(strings.TrimSpace(expr))
+	// 去掉常见前缀
+	expr = strings.TrimPrefix(expr, "计算")
+	expr = strings.TrimPrefix(expr, "求")
+	expr = strings.TrimPrefix(expr, "算")
+	expr = strings.TrimSpace(expr)
+	// 中文符号转英文
+	replacements := map[string]string{
+		"（": "(", "）": ")", "【": "[", "】": "]",
+		"×": "*", "÷": "/", "^": "^", "％": "%",
+	}
+	for old, new := range replacements {
+		expr = strings.ReplaceAll(expr, old, new)
+	}
+	// 只允许合法字符
+	var sb strings.Builder
+	for _, r := range expr {
+		if unicode.IsDigit(r) || unicode.IsSpace(r) ||
+			strings.ContainsRune("+-*/^%().,", r) {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}
+
+// safeEvaluate 安全的表达式求值（仅支持 + - * / ^ % 和括号）
+func safeEvaluate(expr string) (float64, error) {
+	expr = strings.ReplaceAll(expr, " ", "")
+	if expr == "" {
+		return 0, fmt.Errorf("表达式为空")
+	}
+
+	// 验证字符合法性
+	for _, r := range expr {
+		if !unicode.IsDigit(r) && !strings.ContainsRune("+-*/^%().", r) {
+			return 0, fmt.Errorf("非法字符: %q", r)
+		}
+	}
+
+	// 双栈求值
+	var values []float64
+	var ops []rune
+
+	applyOp := func() error {
+		if len(ops) == 0 || len(values) < 2 {
+			return fmt.Errorf("表达式格式错误")
+		}
+		op := ops[len(ops)-1]
+		ops = ops[:len(ops)-1]
+		b := values[len(values)-1]
+		a := values[len(values)-2]
+		values = values[:len(values)-2]
+
+		var res float64
+		switch op {
+		case '+':
+			res = a + b
+		case '-':
+			res = a - b
+		case '*':
+			res = a * b
+		case '/':
+			if b == 0 {
+				return fmt.Errorf("除零错误")
+			}
+			res = a / b
+		case '%':
+			if b == 0 {
+				return fmt.Errorf("除零错误")
+			}
+			res = float64(int64(a) % int64(b))
+		case '^':
+			res = math.Pow(a, b)
+		default:
+			return fmt.Errorf("未知运算符: %c", op)
+		}
+		values = append(values, res)
+		return nil
+	}
+
+	precedence := func(op rune) int {
+		switch op {
+		case '+', '-':
+			return 1
+		case '*', '/', '%':
+			return 2
+		case '^':
+			return 3
+		}
+		return 0
+	}
+
+	i := 0
+	for i < len(expr) {
+		ch := rune(expr[i])
+
+		if unicode.IsDigit(ch) || ch == '.' {
+			j := i
+			for j < len(expr) && (unicode.IsDigit(rune(expr[j])) || rune(expr[j]) == '.') {
+				j++
+			}
+			numStr := expr[i:j]
+			val, err := strconv.ParseFloat(numStr, 64)
+			if err != nil {
+				return 0, fmt.Errorf("数字解析失败: %s", numStr)
+			}
+			values = append(values, val)
+			i = j
+			continue
+		}
+
+		if ch == '(' {
+			ops = append(ops, ch)
+		} else if ch == ')' {
+			for len(ops) > 0 && ops[len(ops)-1] != '(' {
+				if err := applyOp(); err != nil {
+					return 0, err
+				}
+			}
+			if len(ops) == 0 {
+				return 0, fmt.Errorf("括号不匹配")
+			}
+			ops = ops[:len(ops)-1] // 弹出 '('
+		} else {
+			// 运算符
+			for len(ops) > 0 && ops[len(ops)-1] != '(' &&
+				precedence(ops[len(ops)-1]) >= precedence(ch) {
+				if err := applyOp(); err != nil {
+					return 0, err
+				}
+			}
+			ops = append(ops, ch)
+		}
+		i++
+	}
+
+	for len(ops) > 0 {
+		if ops[len(ops)-1] == '(' {
+			return 0, fmt.Errorf("括号不匹配")
+		}
+		if err := applyOp(); err != nil {
+			return 0, err
+		}
+	}
+
+	if len(values) != 1 {
+		return 0, fmt.Errorf("表达式格式错误")
+	}
+	return values[0], nil
 }
 
 // ==================== 文件读写工具 ====================
@@ -983,7 +1148,61 @@ func (t *FileReadTool) Parameters() map[string]interface{} {
 	}
 }
 func (t *FileReadTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
-	return &ToolResult{Content: "文件读取功能待实现，请接入 os 包实现"}, nil
+	filePath, _ := params["path"].(string)
+	if filePath == "" {
+		return NewToolResult("❌ 缺少 path 参数"), nil
+	}
+
+	// 安全检查1：禁止路径遍历（..）
+	if strings.Contains(filePath, "..") {
+		return NewToolResult("❌ 路径包含非法字符 '..'，禁止目录遍历"), nil
+	}
+
+	// 安全检查2：只允许读取文本类文件扩展名
+	allowedExts := map[string]bool{
+		".txt": true, ".md": true, ".go": true, ".json": true,
+		".yaml": true, ".yml": true, ".html": true, ".css": true,
+		".js": true, ".xml": true, ".csv": true, ".log": true,
+		".sql": true, ".sh": true, ".ps1": true, ".ini": true,
+		".conf": true, ".cfg": true, ".properties": true,
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if !allowedExts[ext] {
+		return NewToolResult(fmt.Sprintf("❌ 不允许读取 %s 类型的文件，仅限文本文件", ext)), nil
+	}
+
+	// 安全检查3：解析为绝对路径，限制在项目目录内
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return NewToolResult(fmt.Sprintf("❌ 路径解析失败: %v", err)), nil
+	}
+	cwd, _ := os.Getwd()
+	if !strings.HasPrefix(absPath, cwd) {
+		return NewToolResult("❌ 只能读取项目工作目录内的文件"), nil
+	}
+
+	// 安全检查4：文件大小限制（1MB）
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewToolResult(fmt.Sprintf("❌ 文件不存在: %s", filePath)), nil
+		}
+		return NewToolResult(fmt.Sprintf("❌ 无法访问文件: %v", err)), nil
+	}
+	if info.IsDir() {
+		return NewToolResult("❌ path 指向的是目录，不是文件"), nil
+	}
+	const maxSize = 1024 * 1024 // 1MB
+	if info.Size() > maxSize {
+		return NewToolResult(fmt.Sprintf("❌ 文件大小 %.2fMB 超过 1MB 限制", float64(info.Size())/1024/1024)), nil
+	}
+
+	// 读取文件
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return NewToolResult(fmt.Sprintf("❌ 读取文件失败: %v", err)), nil
+	}
+	return NewToolResult(string(content)), nil
 }
 
 // ==================== 时间日期工具 ====================

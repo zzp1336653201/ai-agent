@@ -276,8 +276,8 @@ type TestRecord struct {
 	TestName  string    `json:"test_name" gorm:"type:varchar(100);not null;comment:测试名称"`
 	Category  string    `json:"category" gorm:"type:varchar(50);comment:测试分类 agent|document|chat|workflow|system"`
 	Status    string    `json:"status" gorm:"type:varchar(20);comment:状态 success|failed|running"`
-	Request   string    `json:"request" gorm:"type:jsonb;comment:请求内容JSON"`
-	Response  string    `json:"response" gorm:"type:jsonb;comment:返回内容JSON"`
+	Request   string    `json:"request" gorm:"type:text;comment:请求内容"`
+	Response  string    `json:"response" gorm:"type:text;comment:返回内容"`
 	Duration  int64     `json:"duration" gorm:"comment:耗时(毫秒)"`
 	ErrorMsg  string    `json:"error_msg" gorm:"type:text;comment:错误信息"`
 	CreatedAt time.Time `json:"created_at" gorm:"comment:创建时间"`
