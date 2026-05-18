@@ -70,7 +70,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 	}
 
 	// 尝试多个搜索后端，一个失败则自动切换
-	backends := []string{"duckduckgo", "bing_html"}
+	backends := []string{"duckduckgo", "bing_html", "baidu_html"}
 
 	var lastErr error
 	for _, backend := range backends {
@@ -98,6 +98,8 @@ func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query
 		return t.searchDuckDuckGo(ctx, query)
 	case "bing_html":
 		return t.searchBingHTML(ctx, query, count)
+	case "baidu_html":
+		return t.searchBaiduHTML(ctx, query, count)
 	default:
 		return "", fmt.Errorf("未知搜索后端: %s", backend)
 	}
@@ -154,6 +156,7 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (str
 }
 
 // searchBingHTML 通过 Bing 搜索（无需 API Key，解析 HTML）
+// 改进：使用正则提取 li.b_algo 结构，包含标题+URL+摘要
 func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count int) (string, error) {
 	searchURL := fmt.Sprintf(
 		"https://www.bing.com/search?q=%s&count=%d",
@@ -177,52 +180,284 @@ func (t *WebSearchTool) searchBingHTML(ctx context.Context, query string, count 
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
 
-	// 简单解析：提取 <h2><a href="...">标题</a></h2> 结构 (Bing)
-	var results []string
-	lines := strings.Split(html, "\n")
-	inH2 := false
-	for _, line := range lines {
-		if strings.Contains(line, "<h2>") || strings.Contains(line, "<h2 ") {
-			inH2 = true
+	// 解析 Bing 搜索结果：每个结果在 <li class="b_algo"> 内部
+	// <h2><a href="实际URL">标题</a></h2>
+	// <p>摘要文本</p>
+	// <cite>显示URL</cite>
+	type resultItem struct {
+		title string
+		url   string
+		desc  string
+	}
+	var results []resultItem
+
+	// 按 li.b_algo 切分
+	sections := strings.Split(html, `<li class="b_algo`)
+	for _, section := range sections[1:] { // 跳过第一个分割前的部分
+		item := resultItem{}
+
+		// 提取 <h2> 内部的 <a href="...">
+		h2End := strings.Index(section, "</h2>")
+		if h2End == -1 {
+			continue
 		}
-		if inH2 {
-			// 提取 <a> 标签
-			aStart := strings.Index(line, "<a ")
-			if aStart != -1 {
-				// 提取 href
-				hrefStart := strings.Index(line[aStart:], "href=\"")
-				if hrefStart != -1 {
-					hrefStart += aStart + 6
-					hrefEnd := strings.Index(line[hrefStart:], "\"")
-					if hrefEnd != -1 {
-						urlStr := line[hrefStart : hrefStart+hrefEnd]
-						// 提取标题文字
-						textStart := strings.Index(line, ">")
-						textEnd := strings.LastIndex(line, "</a>")
-						if textStart != -1 && textEnd != -1 && textEnd > textStart {
-							title := strings.TrimSpace(line[textStart+1 : textEnd])
-							title = stripHTMLTags(title)
-							if title != "" {
-								results = append(results, fmt.Sprintf("- [%s](%s)", title, urlStr))
-							}
-						}
-					}
+		h2Part := section[:h2End]
+
+		// 提取 href
+		hrefTag := `href="`
+		hrefStart := strings.Index(h2Part, hrefTag)
+		if hrefStart == -1 {
+			continue
+		}
+		hrefStart += len(hrefTag)
+		hrefEnd := strings.Index(h2Part[hrefStart:], `"`)
+		if hrefEnd == -1 {
+			continue
+		}
+		rawURL := h2Part[hrefStart : hrefStart+hrefEnd]
+		// 清理 Bing 追踪参数
+		rawURL = cleanBingURL(rawURL)
+
+		// 提取标题（a 标签之间的文本）
+		aEnd := strings.Index(h2Part, "</a>")
+		if aEnd == -1 {
+			continue
+		}
+		// 找 a 标签后的第一个 >
+		gtPos := 0
+		aTagStart := strings.Index(h2Part, "<a ")
+		if aTagStart != -1 {
+			gtPos = strings.Index(h2Part[aTagStart:], ">")
+			if gtPos != -1 {
+				gtPos += aTagStart + 1
+				title := strings.TrimSpace(h2Part[gtPos:aEnd])
+				title = stripHTMLTags(title)
+				if title == "" {
+					continue
 				}
-				inH2 = false
+				// 去掉 "在新选项卡中打开链接" 等 Bing 插入的文本
+				title = cleanBingTitle(title)
+				item.title = title
+				item.url = rawURL
 			}
+		}
+
+		// 提取摘要 <p>...</p>
+		pStart := strings.Index(section, "<p>")
+		if pStart != -1 {
+			pStart += 3
+			pEnd := strings.Index(section[pStart:], "</p>")
+			if pEnd != -1 {
+				desc := stripHTMLTags(section[pStart : pStart+pEnd])
+				desc = strings.TrimSpace(desc)
+				// 去掉过长的多余文本
+				if len([]rune(desc)) > 200 {
+					desc = string([]rune(desc)[:200]) + "..."
+				}
+				item.desc = desc
+			}
+		}
+
+		if item.title != "" {
+			results = append(results, item)
 		}
 	}
 
 	if len(results) == 0 {
+		// 兜底：尝试提取任意 h2 > a 结构
 		return "", fmt.Errorf("Bing 未返回可解析的结果")
 	}
 
-	content := fmt.Sprintf("关于「%s」的搜索结果：\n", query)
-	content += strings.Join(results, "\n")
-	return content, nil
+	// 限制数量
+	if len(results) > count {
+		results = results[:count]
+	}
+
+	// 格式化输出
+	var parts []string
+	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("%d. [%s](%s)", i+1, r.title, r.url))
+		if r.desc != "" {
+			parts = append(parts, fmt.Sprintf("   %s", r.desc))
+		}
+		parts = append(parts, "")
+	}
+
+	return strings.Join(parts, "\n"), nil
 }
 
-// stripHTMLTags 简单去除 HTML 标签
+// cleanBingURL 清理 Bing 搜索结果URL中的追踪参数
+func cleanBingURL(rawURL string) string {
+	// Bing 有时返回的 URL 是经过重定向的，提取实际URL
+	if strings.Contains(rawURL, "https://www.bing.com/ck/a") {
+		// 尝试从 URL 中提取 u 参数
+		uStart := strings.Index(rawURL, "?u=")
+		if uStart == -1 {
+			uStart = strings.Index(rawURL, "&u=")
+		}
+		if uStart != -1 {
+			uStart += 3
+			uEnd := strings.Index(rawURL[uStart:], "&")
+			if uEnd != -1 {
+				if decoded, err := url.QueryUnescape(rawURL[uStart : uStart+uEnd]); err == nil {
+					return decoded
+				}
+			}
+		}
+	}
+	return rawURL
+}
+
+// cleanBingTitle 清理 Bing 搜索结果标题中的多余文本
+func cleanBingTitle(title string) string {
+	// 去掉 "在新选项卡中打开链接"
+	removeTexts := []string{"在新选项卡中打开链接", "Open link in new tab"}
+	for _, t := range removeTexts {
+		title = strings.ReplaceAll(title, t, "")
+	}
+	return strings.TrimSpace(title)
+}
+
+// searchBaiduHTML 通过百度搜索（无需 API Key，解析 HTML）
+// 中文搜索效果好，适合国内技术问题
+func (t *WebSearchTool) searchBaiduHTML(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf(
+		"https://www.baidu.com/s?wd=%s&rn=%d",
+		url.QueryEscape(query), count,
+	)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	// 解析百度搜索结果：每个结果在 <div class="result c-container ..."> 内部
+	// <h3 class="t"><a href="url">标题</a></h3>
+	// <div class="c-abstract">摘要</div>
+	type resultItem struct {
+		title string
+		url   string
+		desc  string
+	}
+	var results []resultItem
+
+	sections := strings.Split(html, `class="result c-container`)
+	for _, section := range sections[1:] {
+		item := resultItem{}
+
+		// 找 h3 class="t" 中的 <a>
+		tStart := strings.Index(section, `class="t"`)
+		if tStart == -1 {
+			continue
+		}
+		tagA := `<a `
+		aStart := strings.Index(section[tStart:], tagA)
+		if aStart == -1 {
+			continue
+		}
+		aStart += tStart
+
+		// 提取 href
+		hrefTag := `href="`
+		hrefStart := strings.Index(section[aStart:], hrefTag)
+		if hrefStart == -1 {
+			continue
+		}
+		hrefStart += aStart + len(hrefTag)
+		hrefEnd := strings.Index(section[hrefStart:], `"`)
+		if hrefEnd == -1 {
+			continue
+		}
+		item.url = section[hrefStart : hrefStart+hrefEnd]
+
+		// 提取标题
+		gtPos := strings.Index(section[aStart:], ">")
+		if gtPos == -1 {
+			continue
+		}
+		gtPos += aStart + 1
+		aClose := strings.Index(section[gtPos:], "</a>")
+		if aClose == -1 {
+			continue
+		}
+		title := stripHTMLTags(section[gtPos : gtPos+aClose])
+		title = strings.TrimSpace(title)
+		// 百度有时会加 <em> 标签标记关键词
+		if title == "" {
+			continue
+		}
+		item.title = title
+
+		// 提取摘要 c-abstract
+		// Baidu 新版用 span.content-right_1THTn 或 div.c-abstract
+		abstractPatterns := []string{`class="c-abstract"`, `class="content-right`}
+		for _, pattern := range abstractPatterns {
+			absStart := strings.Index(section, pattern)
+			if absStart == -1 {
+				continue
+			}
+			// 找到最近的 > 作为内容开始
+			gtStart := strings.Index(section[absStart:], ">")
+			if gtStart == -1 {
+				continue
+			}
+			absContentStart := absStart + gtStart + 1
+			// 找闭合标签
+			for _, closer := range []string{"</div>", "</span>"} {
+				absEnd := strings.Index(section[absContentStart:], closer)
+				if absEnd != -1 {
+					desc := stripHTMLTags(section[absContentStart : absContentStart+absEnd])
+					desc = strings.TrimSpace(desc)
+					if len([]rune(desc)) > 200 {
+						desc = string([]rune(desc)[:200]) + "..."
+					}
+					item.desc = desc
+					break
+				}
+			}
+			if item.desc != "" {
+				break
+			}
+		}
+
+		results = append(results, item)
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("百度未返回可解析的结果")
+	}
+
+	if len(results) > count {
+		results = results[:count]
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("%d. [%s](%s)", i+1, r.title, r.url))
+		if r.desc != "" {
+			parts = append(parts, fmt.Sprintf("   %s", r.desc))
+		}
+		parts = append(parts, "")
+	}
+
+	return strings.Join(parts, "\n"), nil
+}
+
+// stripHTMLTags 去除 HTML 标签，保留文本
 func stripHTMLTags(s string) string {
 	var result strings.Builder
 	inTag := false
@@ -239,11 +474,17 @@ func stripHTMLTags(s string) string {
 			result.WriteRune(c)
 		}
 	}
-	// 清理 &nbsp; 等
-	cleaned := strings.ReplaceAll(result.String(), "&nbsp;", " ")
-	cleaned = strings.ReplaceAll(cleaned, "&amp;", "&")
-	cleaned = strings.ReplaceAll(cleaned, "&lt;", "<")
-	cleaned = strings.ReplaceAll(cleaned, "&gt;", ">")
+	// 清理 HTML 实体
+	cleaned := result.String()
+	replacements := map[string]string{
+		"&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
+		"&quot;": `"`, "&#39;": "'", "&#x27;": "'",
+	}
+	for old, new := range replacements {
+		cleaned = strings.ReplaceAll(cleaned, old, new)
+	}
+	// 合并多余空格
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
 	return strings.TrimSpace(cleaned)
 }
 
