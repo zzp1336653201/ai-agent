@@ -68,7 +68,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface
 		count = 20
 	}
 
-	backends := []string{"duckduckgo", "bing_html", "baidu_html"}
+	backends := []string{"duckduckgo", "duckduckgo_lite", "bing_html", "baidu_html"}
 
 	var lastErr error
 	for _, backend := range backends {
@@ -93,6 +93,8 @@ func (t *WebSearchTool) searchBackend(ctx context.Context, backend string, query
 	switch backend {
 	case "duckduckgo":
 		return t.searchDuckDuckGo(ctx, query)
+	case "duckduckgo_lite":
+		return t.searchDuckDuckGoLite(ctx, query, count)
 	case "bing_html":
 		return t.searchBingHTML(ctx, query, count)
 	case "baidu_html":
@@ -146,6 +148,94 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string) (str
 		content = fmt.Sprintf("[%s]\n%s", result.Heading, content)
 	}
 	return content, nil
+}
+
+// searchDuckDuckGoLite 通过 DuckDuckGo Lite HTML 页面搜索（结构极简稳定）
+func (t *WebSearchTool) searchDuckDuckGoLite(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf("https://lite.duckduckgo.com/lite/?q=%s", url.QueryEscape(query))
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SirenAgent/1.0)")
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	type item struct{ title, url, desc string }
+	var results []item
+
+	rows := strings.Split(html, `<tr class="result">`)
+	for _, row := range rows[1:] {
+		aHref := `<a href="`
+		hStart := strings.Index(row, aHref)
+		if hStart == -1 {
+			continue
+		}
+		hStart += len(aHref)
+		hEnd := strings.Index(row[hStart:], `"`)
+		if hEnd == -1 {
+			continue
+		}
+		u := row[hStart : hStart+hEnd]
+		if u == "" {
+			continue
+		}
+
+		gt := strings.Index(row[hStart-20:], ">")
+		if gt == -1 {
+			continue
+		}
+		tStart := hStart - 20 + gt + 1
+		cA := strings.Index(row[tStart:], "</a>")
+		if cA == -1 {
+			continue
+		}
+		title := strings.TrimSpace(stripHTMLTags(row[tStart : tStart+cA]))
+		if title == "" {
+			continue
+		}
+
+		desc := ""
+		snip := `class="result-snippet"`
+		sStart := strings.Index(row, snip)
+		if sStart != -1 {
+			sGT := strings.Index(row[sStart:], ">")
+			if sGT != -1 {
+				cStart := sStart + sGT + 1
+				tdEnd := strings.Index(row[cStart:], "</td>")
+				if tdEnd != -1 && tdEnd < 500 {
+					desc = strings.TrimSpace(stripHTMLTags(row[cStart : cStart+tdEnd]))
+					if len([]rune(desc)) > 200 {
+						desc = string([]rune(desc)[:200]) + "..."
+					}
+				}
+			}
+		}
+		results = append(results, item{title, u, desc})
+		if len(results) >= count {
+			break
+		}
+	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("DuckDuckGo Lite 未返回可解析的结果")
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("关于「%s」的搜索结果（共%d条）：\n", query, len(results)))
+	for i, r := range results {
+		parts = append(parts, fmt.Sprintf("%d. [%s](%s)", i+1, r.title, r.url))
+		if r.desc != "" {
+			parts = append(parts, fmt.Sprintf("   %s", r.desc))
+		}
+		parts = append(parts, "")
+	}
+	return strings.Join(parts, "\n"), nil
 }
 
 // ==================== Bing 搜索解析 ====================
