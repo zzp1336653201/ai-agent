@@ -37,6 +37,7 @@ func NewDocument(title, content, docType, filePath, agentID string) *Document {
 		FilePath:  filePath,
 		AgentID:   agentID,
 		Tags:      "[]",
+		Metadata:  "{}",
 		Status:    "active",
 		CreatedBy: "admin",
 		CreatedAt: time.Now(),
