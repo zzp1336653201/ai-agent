@@ -483,7 +483,7 @@
         <!-- Chat Panel -->
         <div id="panel-chat" class="panel active">
             <div class="card chat-container">
-                <div class="card-title">💬 RAG 智能问答</div>
+                <div class="card-title">💬 <span id="chat-title">RAG 智能问答</span></div>
                 <div class="chat-messages" id="chat-messages">
                     <div class="message assistant">
                         👋 你好！我是 SirenAgent 智能助手。<br><br>
@@ -872,16 +872,35 @@ function addFileUploadMessage(filename, docId) {
             const loadingMsg = addMessage('assistant', '<div class="spinner"></div>思考中...');
             
             try {
-                const response = await apiCall('/query', {
-                    method: 'POST',
-                    body: JSON.stringify({ query: message, top_k: 5 })
-                });
+                let rawAnswer, toolCalls;
                 
-                const data = response.data || response;
-                const rawAnswer = data.answer || data.result || '抱歉，我无法回答这个问题。';
-                loadingMsg.innerHTML = renderMarkdown(rawAnswer);
+                if (currentAgentId) {
+                    // 有选中智能体 → 调用 Agent Chat（走 ReAct 循环，自动使用工具）
+                    const resp = await apiCall(`/agents/${currentAgentId}/chat`, {
+                        method: 'POST',
+                        body: JSON.stringify({ message, user_id: 'web_user' })
+                    });
+                    const data = resp.data || resp;
+                    rawAnswer = data.answer || '抱歉，我无法回答这个问题。';
+                    toolCalls = data.tool_calls;
+                } else {
+                    // 无智能体 → 调用 RAG Query（检索知识库）
+                    const resp = await apiCall('/query', {
+                        method: 'POST',
+                        body: JSON.stringify({ query: message, top_k: 5 })
+                    });
+                    const data = resp.data || resp;
+                    rawAnswer = data.answer || data.result || '抱歉，我无法回答这个问题。';
+                }
+                
+                // 如果有工具调用记录，显示在答案上方
+                if (toolCalls && toolCalls.length > 0) {
+                    loadingMsg.innerHTML = renderToolCalls(toolCalls) + '<hr>' + renderMarkdown(rawAnswer);
+                } else {
+                    loadingMsg.innerHTML = renderMarkdown(rawAnswer);
+                }
             } catch (error) {
-                loadingMsg.innerHTML = `❌ 错误: ${error.message}<br><br>💡 请检查：<br>1. config.yaml 中的 api_key 是否已填写真实 DeepSeek API Key<br>2. DeepSeek API 服务是否可访问<br>3. 向量数据库 (ChromaDB/Pgvector) 是否已启动`;
+                loadingMsg.innerHTML = `❌ 错误: ${error.message}`;
                 loadingMsg.classList.add('error');
             }
         }
@@ -1001,8 +1020,10 @@ function addFileUploadMessage(filename, docId) {
         
         function chatWithAgent(agentId) {
             currentAgentId = agentId;
+            const agent = agents.find(a => a.id === agentId);
+            document.getElementById('chat-title').textContent = agent ? `🤖 ${agent.name}` : 'RAG 智能问答';
             document.querySelector('[data-tab="chat"]').click();
-            showToast('已切换到与该智能体对话');
+            showToast(`已切换到「${agent ? agent.name : 'RAG'}」对话`);
         }
 
         // 删除智能体
@@ -1539,6 +1560,20 @@ function addFileUploadMessage(filename, docId) {
         init();
     </script>
     <script>
+        // 工具调用可视化渲染
+        function renderToolCalls(toolCalls) {
+            if (!toolCalls || !toolCalls.length) return '';
+            const parts = toolCalls.map(tc => {
+                const input = tc.input ? Object.entries(tc.input).map(([k,v]) => `<span style="color:#94a3b8;">${k}:</span> ${typeof v === 'string' ? v.slice(0,80) : JSON.stringify(v).slice(0,80)}`).join(', ') : '';
+                const latency = tc.latency_ms ? `<span style="color:var(--text-muted);"> (${tc.latency_ms}ms)</span>` : '';
+                return `<div style="font-size:0.85rem;color:#60a5fa;padding:0.3rem 0;">
+                    🔧 <strong>${tc.tool_name}</strong>${latency}
+                    ${input ? `<span style="color:var(--text-muted);"> → ${input}</span>` : ''}
+                </div>`;
+            }).join('');
+            return `<div style="background:rgba(96,165,250,0.08);border-radius:0.5rem;padding:0.5rem 0.8rem;margin-bottom:0.5rem;">${parts}</div>`;
+        }
+        
         // 简易 Markdown 渲染器（渲染成安全的 HTML）
         function renderMarkdown(text) {
             if (!text) return '';

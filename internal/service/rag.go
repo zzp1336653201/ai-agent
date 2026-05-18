@@ -136,11 +136,25 @@ func (s *RAGService) Query(ctx context.Context, req *QueryRequest) (*QueryRespon
 		answer = resp.Content
 
 	} else if s.engine != nil {
-		// 知识库为空但有 Agent 引擎 → 走 Agent ReAct 循环（支持联网等工具调用）
+		// 知识库为空但有 Agent 引擎 → 走 Agent ReAct 循环（使用 web_search 等工具获取实时信息）
 		method = "agent"
+		toolList := s.engine.ListTools()
+		toolNames := make([]string, 0, len(toolList))
+		for _, t := range toolList {
+			toolNames = append(toolNames, t.Name())
+		}
 		dummyAgent := &model.Agent{
-			Name:         "RAG助手",
-			SystemPrompt: "你是一个友好的AI助手，可以帮助用户解答问题。",
+			Name: "智能助手",
+			SystemPrompt: fmt.Sprintf(`你是一个专业的AI智能助手，目前知识库中暂无相关文档。
+你有以下工具可以使用：%s
+
+核心工作流程：
+1. 如果用户询问实时信息、最新新闻、你不知道的知识 → 使用 web_search 搜索
+2. 如果用户询问知识库中的内容 → 使用 rag_search 在"agent_knowledge"集合中检索
+3. 如果用户需要访问某个网页 → 使用 http_request
+4. 如果你发现了有价值的新信息 → 使用 knowledge_save 保存到知识库
+
+请通过"思考→行动→观察"的循环逐步解决问题，给出准确清晰的回答。`, strings.Join(toolNames, ", ")),
 		}
 
 		result, err := s.engine.Run(ctx, dummyAgent, req.Query)
