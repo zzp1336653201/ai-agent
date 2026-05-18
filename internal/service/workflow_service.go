@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"sirenagent/internal/core"
 	"sirenagent/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // WorkflowService 工作流管理服务
@@ -62,10 +65,14 @@ type EdgeDef struct {
 // 创建工作流
 func (s *WorkflowService) Create(req *CreateWorkflowRequest) (*model.Workflow, error) {
 	wf := &model.Workflow{
-		Name:        req.Name,
-		Description: req.Description,
-		Trigger:     req.Trigger,
-		Status:      "active",
+		ID:            uuid.New().String(),
+		Name:          req.Name,
+		Description:   req.Description,
+		Trigger:       req.Trigger,
+		TriggerConfig: "{}",
+		Status:        "active",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 
 	if err := s.repo.Create(wf); err != nil {

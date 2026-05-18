@@ -72,6 +72,7 @@ func NewAgent(name, description, systemPrompt string) *Agent {
 		Model:        "llama3.2",
 		Temperature:  0.7,
 		MaxTokens:    2048,
+		Tools:        "[]",
 		MemoryType:   "short",
 		Status:       "active",
 		CreatedAt:    time.Now(),
@@ -120,6 +121,7 @@ func NewMessage(conversationID, role, content string) *Message {
 		ConversationID: conversationID,
 		Role:           role,
 		Content:        content,
+		ToolCalls:      "[]",
 		CreatedAt:      time.Now(),
 	}
 }
@@ -286,6 +288,8 @@ func NewTestRecord(testName, category string) *TestRecord {
 		TestName:  testName,
 		Category:  category,
 		Status:    "running",
+		Request:   "{}",
+		Response:  "{}",
 		CreatedAt: time.Now(),
 	}
 }
