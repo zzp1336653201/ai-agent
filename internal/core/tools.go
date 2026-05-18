@@ -682,6 +682,169 @@ func (t *GetCurrentDateTimeTool) Execute(ctx context.Context, params map[string]
 	return NewToolResult(content), nil
 }
 
+// ==================== 知识保存工具 ====================
+
+// KnowledgeSaveHandler 保存文档元数据的回调函数
+type KnowledgeSaveHandler func(ctx context.Context, title, content, category, agentID string) error
+
+// KnowledgeSaveTool 知识保存工具 - 让Agent可以在对话中自主保存信息到知识库向量数据库
+type KnowledgeSaveTool struct {
+	engine *AgentEngine
+	saver  KnowledgeSaveHandler
+}
+
+func NewKnowledgeSaveTool(engine *AgentEngine, saver KnowledgeSaveHandler) *KnowledgeSaveTool {
+	return &KnowledgeSaveTool{
+		engine: engine,
+		saver:  saver,
+	}
+}
+
+func (t *KnowledgeSaveTool) Name() string { return "knowledge_save" }
+func (t *KnowledgeSaveTool) Description() string {
+	return "将有用的信息保存到知识库向量数据库中，供后续检索使用。" +
+		"当你从网页、搜索结果或其他来源获取到有价值的内容时，" +
+		"或者用户希望记住某些信息时使用。保存后下次检索知识库就能找到。"
+}
+func (t *KnowledgeSaveTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "知识标题，简短概括内容主题，建议10-30字",
+				"minLength":   2,
+				"maxLength":   200,
+			},
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "知识正文内容，要保存的具体信息。建议整理成清晰的结构化文本，避免原始噪音",
+				"minLength":   10,
+				"maxLength":   50000,
+			},
+			"category": map[string]interface{}{
+				"type":        "string",
+				"description": "知识分类，可选值：tech（技术）, product（产品）, faq（常见问题）, policy（政策）, manual（手册）, other（其他）",
+				"enum":        []string{"tech", "product", "faq", "policy", "manual", "other"},
+				"default":     "other",
+			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "标签列表，方便分类检索，建议2-5个关键词",
+				"maxItems":    10,
+			},
+		},
+		"required": []string{"title", "content"},
+	}
+}
+
+func (t *KnowledgeSaveTool) Execute(ctx context.Context, params map[string]interface{}) (*ToolResult, error) {
+	title, _ := params["title"].(string)
+	content, _ := params["content"].(string)
+	content = strings.TrimSpace(content)
+	if len([]rune(content)) < 10 {
+		return NewToolResult("保存失败：内容太短，最少需要10个字"), nil
+	}
+
+	category, _ := params["category"].(string)
+	if category == "" {
+		category = "other"
+	}
+
+	tags := make([]string, 0)
+	if rawTags, ok := params["tags"].([]interface{}); ok {
+		for _, tag := range rawTags {
+			if s, ok := tag.(string); ok {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					tags = append(tags, s)
+				}
+			}
+		}
+	}
+
+	// 从 Context 获取当前 Agent ID（如果有）
+	agentID, _ := ctx.Value(ContextKeyKnowledgeBaseID).(string)
+
+	// 1. 简单分块（按段落/换行）
+	chunks := smartChunkContent(content)
+
+	// 2. 构建元数据
+	metadatas := make([]map[string]interface{}, len(chunks))
+	for i := range chunks {
+		metadatas[i] = map[string]interface{}{
+			"title":       title,
+			"chunk_index": i,
+			"type":        "agent_saved",
+			"category":    category,
+			"tags":        tags,
+			"agent_id":    agentID,
+		}
+	}
+
+	// 3. 确定向量集合
+	collection := KnowledgeBaseCollection(agentID)
+
+	// 4. 写入向量数据库
+	if t.engine.vectorDB != nil {
+		docID := fmt.Sprintf("save_%d", time.Now().UnixNano())
+		if err := t.engine.vectorDB.Insert(ctx, docID, chunks, metadatas, collection); err != nil {
+			return nil, fmt.Errorf("向量入库失败: %w", err)
+		}
+		fmt.Printf("[KnowledgeSave] 已保存: title=%q, chunks=%d, collection=%s\n", title, len(chunks), collection)
+	} else {
+		return NewToolResult("保存失败：向量数据库未初始化"), nil
+	}
+
+	// 5. 可选：保存文档元数据（如配置了 saver）
+	if t.saver != nil {
+		agentIDForMeta := agentID
+		if agentIDForMeta == "" {
+			agentIDForMeta = "agent_saved"
+		}
+		if err := t.saver(ctx, title, content, category, agentIDForMeta); err != nil {
+			fmt.Printf("[KnowledgeSave] 文档元数据保存失败: %v\n", err)
+		}
+	}
+
+	tagStr := strings.Join(tags, ", ")
+	if tagStr != "" {
+		tagStr = "，标签: " + tagStr
+	}
+	return NewToolResult(fmt.Sprintf("✅ 知识已保存\n标题: %s\n分类: %s\n内容长度: %d字\n分块数: %d%s",
+		title, category, len([]rune(content)), len(chunks), tagStr)), nil
+}
+
+// smartChunkContent 简单按换行分段，每段不超过约500字
+func smartChunkContent(content string) []string {
+	paragraphs := strings.Split(content, "\n")
+	var chunks []string
+	var current strings.Builder
+
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if current.Len() > 0 && len([]rune(current.String()+p)) > 500 {
+			chunks = append(chunks, current.String())
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteString("\n")
+		}
+		current.WriteString(p)
+	}
+	if current.Len() > 0 {
+		chunks = append(chunks, current.String())
+	}
+	if len(chunks) == 0 {
+		chunks = append(chunks, content)
+	}
+	return chunks
+}
+
 // SocialMediaService 社交媒体服务接口
 type SocialMediaService interface {
 	Publish(ctx context.Context, req *PublishRequest) (postID string, err error)

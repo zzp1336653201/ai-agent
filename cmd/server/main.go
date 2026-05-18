@@ -138,6 +138,20 @@ func main() {
 	ragSvc := service.NewRAGService(llmProvider, vectorDB, memoryMgr, cfg.LLM.Model)
 	ragSvc.SetAgentEngine(agentEngine)
 
+	// 注册 knowledge_save 工具（依赖 docSvc 做文档元数据持久化）
+	knowledgeSaveTool := core.NewKnowledgeSaveTool(agentEngine, func(ctx context.Context, title, content, category, agentID string) error {
+		_, err := docSvc.Upload(ctx, &service.UploadRequest{
+			Title:    title,
+			Content:  content,
+			Type:     "txt",
+			Category: category,
+			AgentID:  agentID,
+		})
+		return err
+	})
+	agentEngine.RegisterTool(knowledgeSaveTool)
+	sugar.Infof("✅ 已注册 knowledge_save 工具（Agent 自主知识保存）")
+
 	// 13. 创建 Handler 层
 	agentHandler := handler.NewAgentHandler(agentSvc)
 	workflowHandler := handler.NewWorkflowHandler(workflowSvc)
